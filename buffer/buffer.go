@@ -79,7 +79,7 @@ func (b *Buffer) Init() error {
 	return nil
 }
 
-func (b *Buffer) addSegment() error {
+func (b *Buffer) addSegment() (*segment.Segment, error) {
 	if len(b.segments) > 0 {
 		b.segments[len(b.segments)-1].Close()
 	}
@@ -89,10 +89,10 @@ func (b *Buffer) addSegment() error {
 	}
 	err := s.Open(true)
 	if err != nil {
-		return fmt.Errorf("error creating segment: %v", err)
+		return nil, fmt.Errorf("error creating segment: %v", err)
 	}
 	b.segments = append(b.segments, s)
-	return nil
+	return s, nil
 }
 
 func (b *Buffer) trimSegments() error {
@@ -182,12 +182,21 @@ func (b *Buffer) Write(m *message.Message) error {
 	if !b.running {
 		return fmt.Errorf("buffer not running")
 	}
+	var err error
 	b.lock.Lock()
 	defer b.lock.Unlock()
-	if b.Len%b.SegmentMaxMessages == 0 {
-		b.addSegment()
+	if len(b.segments) == 0 {
+		if _, err := b.addSegment(); err != nil {
+			return err
+		}
 	}
-	if err := b.segments[len(b.segments)-1].Write(m); err != nil {
+	s := b.segments[len(b.segments)-1]
+	if s.MessageCount >= b.SegmentMaxMessages || s.SizeB >= b.SegmentMaxBytes {
+		if s, err = b.addSegment(); err != nil {
+			return err
+		}
+	}
+	if err := s.Write(m); err != nil {
 		return err
 	}
 	stats.Stats <- &stats.Stat{Name: "buffer_message_write_n", Kind: stats.Counter, IntVal: 1}

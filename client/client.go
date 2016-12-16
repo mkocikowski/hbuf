@@ -64,9 +64,9 @@ func NewClient(n *Node, r *mux.Router) *Client {
 	c.Routes = []*router.Route{
 		{"/", []string{"GET"}, c.handleGetInfo, "show information about the node"},
 		{"/topics", []string{"GET"}, c.handleGetTopics, "show topics"},
-		{"/topics/{topic}", []string{"POST"}, c.handleWriteToTopic, "send message to topic, creating topic if necessary"},
-		{"/topics/{topic}", []string{"DELETE"}, c.handleDeleteTopic, "delete topic and all its data"},
-		{"/topics/{topic}/next", []string{"GET", "POST"}, c.handleConsumeFromTopic, "consume from topic; optional ?id= specifies consumer"},
+		{`/topics/{topic:[a-zA-Z0-9_\-]{1,256}}`, []string{"POST"}, c.handleWriteToTopic, "send message to topic, creating topic if necessary"},
+		{`/topics/{topic:[a-zA-Z0-9_\-]{1,256}}`, []string{"DELETE"}, c.handleDeleteTopic, "delete topic and all its data"},
+		{`/topics/{topic:[a-zA-Z0-9_\-]{1,256}}/next`, []string{"GET", "POST"}, c.handleConsumeFromTopic, "consume from topic; optional ?c= specifies consumer"},
 		//{"/buffers", []string{"GET"}, c.handleGetBuffers, "show topic buffers"},
 	}
 	u, _ := url.Parse(c.URL)
@@ -262,10 +262,19 @@ func (c *Client) handleConsumeFromTopic(req *http.Request) *router.Response {
 		//WARN.Printf("no buffers for topic[s] %q found", mux.Vars(req)["topic"])
 		return &router.Response{StatusCode: http.StatusNoContent}
 	}
+	consumer := req.URL.Query().Get("c")
+	if consumer == "" {
+		consumer = "-"
+	}
+	if !util.TopicNameRE.MatchString(consumer) {
+		return &router.Response{Error: fmt.Errorf("invalid consumer name"), StatusCode: http.StatusBadRequest}
+	}
 	n := rand.Intn(len(buffers))
 	for i := n; i < n+len(buffers); i++ {
 		b := buffers[i%len(buffers)]
-		resp, err := client.Post(b.URL+"/_consume?id="+req.URL.Query().Get("id"), "", nil)
+		url := b.URL + "/consumers/" + consumer + "/_next"
+		//DEBUG.Println(url)
+		resp, err := client.Post(url, "", nil)
 		if err != nil {
 			return &router.Response{Error: fmt.Errorf("error consuming: %v", err), StatusCode: http.StatusInternalServerError}
 		}

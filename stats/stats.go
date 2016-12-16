@@ -7,17 +7,15 @@ import (
 	"sync"
 )
 
-type StatKind int
-
 const (
-	Counter StatKind = iota
-	Gauge
+	Counter byte = 'c'
+	Gauge        = 'g'
 )
 
 type Stat struct {
-	Name   string
-	Kind   StatKind
-	IntVal int
+	Name   string `json:"name"`
+	Kind   byte   `json:"-"`
+	IntVal int    `json:"val"`
 }
 
 var (
@@ -54,4 +52,10 @@ func Json() []byte {
 	j, _ := json.Marshal(stats)
 	lock.Unlock()
 	return j
+}
+
+func Reset() {
+	lock.Lock()
+	stats = make(map[string]*Stat)
+	lock.Unlock()
 }

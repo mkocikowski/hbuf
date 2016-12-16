@@ -77,9 +77,9 @@ func NewController(n *Node, r *mux.Router) (*Controller, error) {
 		{"/workers", []string{"POST"}, c.handleRegisterWorker, ""},
 		{"/workers", []string{"GET"}, c.handleGetWorkers, ""},
 		{"/topics", []string{"GET"}, c.handleGetTopics, ""},
-		{"/topics/{topic}", []string{"POST"}, c.handleCreateTopic, ""},
-		{"/topics/{topic}", []string{"DELETE"}, c.handleDeleteTopic, ""},
-		{"/topics/{topic}", []string{"GET"}, c.handleGetTopic, ""},
+		{`/topics/{topic:[a-zA-Z0-9_\-]{1,256}}`, []string{"POST"}, c.handleCreateTopic, ""},
+		{`/topics/{topic:[a-zA-Z0-9_\-]{1,256}}`, []string{"DELETE"}, c.handleDeleteTopic, ""},
+		{`/topics/{topic:[a-zA-Z0-9_\-]{1,256}}`, []string{"GET"}, c.handleGetTopic, ""},
 		{"/buffers", []string{"POST"}, c.handleRegisterBuffer, ""},
 		{"/buffers", []string{"GET"}, c.handleGetBuffers, ""},
 	}

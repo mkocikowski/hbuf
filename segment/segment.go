@@ -1,8 +1,10 @@
 package segment
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"sync"
 	"time"
@@ -14,14 +16,19 @@ const (
 	DEFAULT_OFFSET_CACHE_SIZE = 1 << 10
 )
 
+var (
+	DEBUG = log.New(os.Stderr, "[DEBUG] ", log.Lshortfile)
+)
+
 type Config struct {
 	OffsetCacheSize int `json:"segment_offset_cache_size"`
 }
 
 type Segment struct {
-	Path           string
-	FirstMessageId int // seq is the message sequential number, incremental, unique to a buffer across all segments
-	MessageCount   int
+	Path           string `json:"path"`
+	FirstMessageId int    `json:"first_id"` // seq is the message sequential number, incremental, unique to a buffer across all segments
+	MessageCount   int    `json:"count"`
+	SizeB          int64  `json:"size_b"`
 	writer         *os.File
 	reader         *os.File
 	lock           *sync.Mutex
@@ -46,7 +53,6 @@ func (s *Segment) Open(append bool) error {
 		if err != nil {
 			return fmt.Errorf("error opening segment file for writing: %v", err)
 		}
-		//log.Printf("opened segment %q for writing", s.Path)
 	}
 	s.reader.Close()
 	s.reader, err = os.Open(s.Path)
@@ -63,7 +69,9 @@ func (s *Segment) Open(append bool) error {
 	}
 	s.FirstMessageId = m.Id
 	s.MessageCount = s.count()
-	//log.Printf("opened segment %q for reading", s.Path)
+	s.SizeB, _ = s.reader.Seek(0, 2)
+	j, _ := json.Marshal(s)
+	DEBUG.Println(string(j))
 	return nil
 }
 
@@ -178,6 +186,7 @@ func (s *Segment) write(m *message.Message) error {
 	if err != nil {
 		return err
 	}
+	s.SizeB += int64(len(head) + len(body))
 	// skipping Sync() improves performance by order of magnitude
 	return s.writer.Sync()
 }

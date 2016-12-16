@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"github.com/mkocikowski/hbuf/cmd/hbuf/consume"
 	"github.com/mkocikowski/hbuf/cmd/hbuf/node"
@@ -57,7 +58,7 @@ func main() {
 		os.Exit(0)
 	case "consume":
 		fs := flag.NewFlagSet("consume", flag.ExitOnError)
-		url := fs.String("url", "http://localhost:8080/topics/test/next?id=test", "url of the consumer")
+		url := fs.String("url", "http://localhost:8080/topics/test/next", "url to consume from")
 		fs.Usage = func() {
 			fmt.Fprintln(os.Stderr, "Consume messages from topic[s], write to stdout.")
 			fs.PrintDefaults()
@@ -68,18 +69,19 @@ func main() {
 	case "stress":
 		fs := flag.NewFlagSet("stress", flag.ExitOnError)
 		config := fs.String("config", "", "path to the config file; uses default config when config=''")
-		showExample := fs.Bool("example", false, "when set, print default config to stdout and exit")
+		example := fs.Bool("example", false, "when set, print default config to stdout and exit")
+		duration := fs.Duration("duration", 10*time.Second, "run for this long then exit")
 		fs.Usage = func() {
 			fmt.Fprintln(os.Stderr, "Run load against configured endpoints.")
 			fs.PrintDefaults()
 		}
 		fs.Parse(os.Args[2:])
-		if *showExample {
+		if *example {
 			j, _ := json.MarshalIndent(stress.DefaultConf, "", "  ")
 			fmt.Fprintf(os.Stdout, "%s\n", string(j))
 			os.Exit(1)
 		}
-		stress.Run(*config)
+		stress.Run(*config, *duration)
 	default:
 		fmt.Println(info)
 		os.Exit(2)

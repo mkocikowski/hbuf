@@ -93,7 +93,10 @@ func (n *Node) Init() *Node {
 	n.router = mux.NewRouter()
 	n.router.HandleFunc("/stats", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintln(w, string(stats.Json()))
-	})
+	}).Methods("GET")
+	n.router.HandleFunc("/stats", func(w http.ResponseWriter, r *http.Request) {
+		stats.Reset()
+	}).Methods("DELETE")
 	return n
 }
 

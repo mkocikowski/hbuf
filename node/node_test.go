@@ -107,7 +107,7 @@ func TestNode(t *testing.T) {
 		t.Fatalf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	resp, _ = http.Get(tenant.Client.URL + "/topics/foo/next?id=baz")
+	resp, _ = http.Get(tenant.Client.URL + "/topics/foo/next?c=baz")
 	if resp.StatusCode != http.StatusOK {
 		b, _ := ioutil.ReadAll(resp.Body)
 		log.Println(string(b))

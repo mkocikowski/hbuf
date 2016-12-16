@@ -15,7 +15,7 @@ var (
 )
 
 func Run() {
-	INFO.Println("starting...")
+	//INFO.Println("starting...")
 	n := &node.Node{
 		URL: "http://localhost:8080",
 		Dir: "./data",

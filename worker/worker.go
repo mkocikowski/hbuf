@@ -59,12 +59,13 @@ func NewWorker(n *Node, r *mux.Router) (*Worker, error) {
 		{"/", []string{"GET"}, w.handleGetInfo, "show information about the node"},
 		{"/buffers", []string{"POST"}, w.handleCreateBuffer, "create a buffer; send empty body; returns new buffer info"},
 		{"/buffers", []string{"GET"}, w.handleGetBuffers, "show available buffers"},
-		{"/buffers/{buffer}", []string{"GET"}, w.handleGetBuffer, "show buffer info"},
-		{"/buffers/{buffer}", []string{"POST"}, w.handleWriteToBuffer, "write message to buffer"},
-		{"/buffers/{buffer}", []string{"DELETE"}, w.handleDeleteBuffer, "delete buffer and all its data"},
-		{"/buffers/{buffer}/consumers", []string{"GET"}, w.handleGetOffsets, "get consumers and their offsets"},
-		{"/buffers/{buffer}/_read", []string{"GET"}, w.handleReadFromBuffer, "read message specified by ?offset="},
-		{"/buffers/{buffer}/_consume", []string{"POST"}, w.handleConsumeFromBuffer, "consume from buffer; optional ?id= specifies consumer"},
+		{"/buffers/{buffer:[a-f0-9]{16}}", []string{"GET"}, w.handleGetBuffer, "show buffer info"},
+		{"/buffers/{buffer:[a-f0-9]{16}}", []string{"POST"}, w.handleWriteToBuffer, "write message to buffer"},
+		{"/buffers/{buffer:[a-f0-9]{16}}", []string{"DELETE"}, w.handleDeleteBuffer, "delete buffer and all its data"},
+		{"/buffers/{buffer:[a-f0-9]{16}}/consumers", []string{"GET"}, w.handleGetOffsets, "get consumers and their offsets"},
+		{`/buffers/{buffer:[a-f0-9]{16}}/consumers/{consumer:[a-zA-Z0-9_\-]{1,256}}/_next`, []string{"POST"}, w.handleConsumeFromBuffer, "consume message from buffer"},
+		//{"/buffers/{buffer}/_read", []string{"GET"}, w.handleReadFromBuffer, "read message specified by ?offset="},
+		//{"/buffers/{buffer}/_consume", []string{"POST"}, w.handleConsumeFromBuffer, "consume from buffer; optional ?id= specifies consumer"},
 	}
 	u, _ := url.Parse(w.URL)
 	router.RegisterRoutes(r, u.Path, w.routes)
@@ -247,7 +248,10 @@ func (w *Worker) handleConsumeFromBuffer(req *http.Request) *router.Response {
 	if !ok {
 		return &router.Response{Error: fmt.Errorf("buffer %q not found", bufId), StatusCode: http.StatusNotFound}
 	}
-	consId := req.URL.Query().Get("id")
+	consId := mux.Vars(req)["consumer"]
+	if consId == "" {
+		consId = "-"
+	}
 	m, err := b.Consume(consId)
 	if err != nil {
 		return &router.Response{Error: fmt.Errorf("error consuming from buffer %q, consumer id %q: %v", bufId, consId, err), StatusCode: http.StatusInternalServerError}

@@ -8,7 +8,8 @@ import (
 )
 
 var (
-	TopicNameRE = regexp.MustCompile(`^[a-zA-Z0-9_]{1,256}$`)
+	TopicNameRE    = regexp.MustCompile(`^[a-zA-Z0-9_\-]{1,256}$`)
+	ConsumerNameRE = regexp.MustCompile(`^[a-zA-Z0-9_\-]{1,256}$`)
 	//Client      = &http.Client{
 	//Transport: &http.Transport{
 	//MaxIdleConnsPerHost: 256,

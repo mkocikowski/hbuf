@@ -32,7 +32,7 @@ var (
 		WriteSleepMs: 10,
 	}
 	defaultConsumerConf = &consumerT{
-		URL:         "http://localhost:8080/topics/foo/next?id=test",
+		URL:         "http://localhost:8080/topics/foo/next",
 		ReadSleepMs: 10,
 	}
 	DefaultConf = &confT{
@@ -67,13 +67,13 @@ func startProducer(p *producerT) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		s := strings.Repeat("x", p.MsgSizeB)
 		for {
 			select {
 			case <-done:
 				return
 			default:
 			}
-			s := strings.Repeat("x", p.MsgSizeB)
 			resp, err := http.Post(p.URL, "text/plain", bytes.NewBufferString(s))
 			if err != nil {
 				DEBUG.Fatalln(err)
@@ -136,7 +136,7 @@ func configure(filename string) (*confT, error) {
 	return c, nil
 }
 
-func Run(path string) {
+func Run(path string, duration time.Duration) {
 	conf, err := configure(path)
 	if err != nil {
 		DEBUG.Fatalf("error loading config: %v", err)
@@ -148,12 +148,16 @@ func Run(path string) {
 		<-c
 		close(done)
 	}()
+	go func() {
+		time.Sleep(duration)
+		close(done)
+	}()
 	for _, p := range conf.Producers {
 		startProducer(p)
 	}
 	for _, c := range conf.Consumers {
 		startConsumer(c)
 	}
-	INFO.Println("running.")
+	INFO.Printf("running for: %v", duration)
 	wg.Wait()
 }
