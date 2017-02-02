@@ -23,7 +23,7 @@ func TestBuffer(t *testing.T) {
 	//defer os.RemoveAll(dir)
 
 	uid := util.Uid()
-	b := &Buffer{Id: uid, Dir: dir}
+	b := &Buffer{ID: uid, Path: dir}
 	err = b.Init()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -63,7 +63,7 @@ func TestBuffer(t *testing.T) {
 
 	b.Stop()
 
-	b = &Buffer{Id: uid, Dir: dir}
+	b = &Buffer{ID: uid, Path: dir}
 	b.Init()
 	if b.Len != 1 {
 		t.Fatalf("expected Len==1, got: %v", b.Len)
@@ -76,8 +76,8 @@ func TestBuffer(t *testing.T) {
 	if string(x.Body) != string(m.Body) {
 		t.Error("read message not same as written")
 	}
-	if x.Id != 0 {
-		t.Fatalf("expected message id==0, got: %v", x.Id)
+	if x.ID != 0 {
+		t.Fatalf("expected message id==0, got: %v", x.ID)
 	}
 
 	m = &message.Message{Type: "text/plain", Body: []byte("monkey")}
@@ -85,8 +85,8 @@ func TestBuffer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if m.Id != 1 {
-		t.Fatalf("expected message id==1, got: %v", m.Id)
+	if m.ID != 1 {
+		t.Fatalf("expected message id==1, got: %v", m.ID)
 	}
 
 }
@@ -101,7 +101,7 @@ func TestRotateSegments(t *testing.T) {
 	//defer os.RemoveAll(dir)
 
 	uid := util.Uid()
-	b := &Buffer{Id: uid, Dir: dir}
+	b := &Buffer{ID: uid, Path: dir}
 	err = b.Init()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -127,7 +127,7 @@ func TestRotateSegments(t *testing.T) {
 
 	b.Stop()
 
-	b = &Buffer{Id: uid, Dir: dir}
+	b = &Buffer{ID: uid, Path: dir}
 	b.Init()
 
 	_, err = b.Read(0)
@@ -152,7 +152,7 @@ func BenchmarkSaveConsumers(b *testing.B) {
 	log.Println(dir)
 	//defer os.RemoveAll(dir)
 	uid := util.Uid()
-	buffer := &Buffer{Id: uid, Dir: dir}
+	buffer := &Buffer{ID: uid, Path: dir}
 	err = buffer.Init()
 	if err != nil {
 		b.Errorf("unexpected error: %v", err)
@@ -176,7 +176,7 @@ func BenchmarkConsume(b *testing.B) {
 	//defer os.RemoveAll(dir)
 
 	uid := util.Uid()
-	buffer := &Buffer{Id: uid, Dir: dir}
+	buffer := &Buffer{ID: uid, Path: dir}
 	err = buffer.Init()
 	if err != nil {
 		b.Errorf("unexpected error: %v", err)

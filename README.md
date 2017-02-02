@@ -36,3 +36,13 @@ CLI
 - producer
 - consumer
 - load generator ("stress")
+
+Reason
+---
+I see Kafka not as a message queue, but as an append-only file; a place where
+data (usually logs of some kind) gets dumped, and then read and re-read at
+leisure. A semi-permanent data store; a buffer. I find this hugely useful,
+especially if messages can be assigned unique IDs, which allows for idempotent
+consumption.
+
+- 

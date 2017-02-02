@@ -1,134 +1,70 @@
 package node
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
-	"os"
 	"path/filepath"
 
 	"github.com/gorilla/mux"
-	"github.com/mkocikowski/hbuf/client"
-	"github.com/mkocikowski/hbuf/controller"
+	"github.com/mkocikowski/hbuf/log"
 	"github.com/mkocikowski/hbuf/stats"
-	"github.com/mkocikowski/hbuf/util"
-	"github.com/mkocikowski/hbuf/worker"
+	"github.com/mkocikowski/hbuf/tenant"
 )
-
-var (
-	INFO = log.New(os.Stderr, "[INFO] ", 0)
-)
-
-type Tenant struct {
-	Id         string
-	URL        string
-	Controller *controller.Controller
-	Worker     *worker.Worker
-	Client     *client.Client
-	Dir        string
-	router     *mux.Router
-}
-
-func (t *Tenant) addController() error {
-	i := util.Uid()
-	n := &controller.Node{
-		Id:            i,
-		Tenant:        t.Id,
-		URL:           t.URL + "/nodes/" + i,
-		ControllerURL: t.URL + "/nodes/" + i,
-		Dir:           t.Dir,
-	}
-	c, err := controller.NewController(n, t.router)
-	if err != nil {
-		return fmt.Errorf("error creating controller: %v", err)
-	}
-	t.Controller = c
-	return nil
-}
-
-func (t *Tenant) addWorker() error {
-	i := util.Uid()
-	n := &worker.Node{
-		Id:            i,
-		Tenant:        t.Id,
-		URL:           t.URL + "/nodes/" + i,
-		ControllerURL: t.Controller.URL,
-		Dir:           t.Dir,
-	}
-	w, err := worker.NewWorker(n, t.router)
-	if err != nil {
-		return fmt.Errorf("error creating worker: %v", err)
-	}
-	t.Worker = w
-	return nil
-}
-
-func (t *Tenant) addClient() error {
-	i := util.Uid()
-	c := &client.Node{
-		Id:            i,
-		Tenant:        t.Id,
-		URL:           t.URL,
-		ControllerURL: t.Controller.URL,
-	}
-	t.Client = client.NewClient(c, t.router)
-	return nil
-}
-
-func (t *Tenant) Stop() {
-	t.Worker.Stop()
-	t.Controller.Stop()
-}
 
 type Node struct {
 	URL     string
-	Dir     string
-	tenants map[string]*Tenant
+	Path    string
+	tenants map[string]*tenant.Tenant
 	router  *mux.Router
 }
 
 func (n *Node) Init() *Node {
-	n.tenants = make(map[string]*Tenant)
+	n.tenants = make(map[string]*tenant.Tenant)
 	n.router = mux.NewRouter()
+	//
+	n.router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		j, _ := json.Marshal(n.tenants)
+		fmt.Fprintln(w, string(j))
+	}).Methods("GET")
+	//
 	n.router.HandleFunc("/stats", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintln(w, string(stats.Json()))
 	}).Methods("GET")
 	n.router.HandleFunc("/stats", func(w http.ResponseWriter, r *http.Request) {
 		stats.Reset()
 	}).Methods("DELETE")
+	//
+	log.DEBUG.Printf("starting node %q ...", n.URL)
 	return n
 }
 
 func (n *Node) Load() {
-	files, _ := ioutil.ReadDir(filepath.Join(n.Dir, "tenants"))
+	//
+	files, _ := ioutil.ReadDir(filepath.Join(n.Path, "tenants"))
 	for _, f := range files {
-		n.AddTenant(f.Name(), "")
+		log.DEBUG.Printf("loading data for tenant %q", f.Name())
+		n.AddTenant(f.Name())
 	}
 }
 
-func (n *Node) AddTenant(id string, seed string) (*Tenant, error) {
+func (n *Node) AddTenant(id string) (*tenant.Tenant, error) {
+	//
 	if _, ok := n.tenants[id]; ok {
 		return nil, fmt.Errorf("tenant %q already exists", id)
 	}
-	t := &Tenant{
-		Id:     id,
-		URL:    n.URL + "/tenants/" + id,
-		Dir:    filepath.Join(n.Dir, "tenants", id),
-		router: n.router,
+	t := &tenant.Tenant{
+		ID:   id,
+		URL:  n.URL + "/tenants/" + id,
+		Path: filepath.Join(n.Path, "tenants", id),
 	}
-	if err := t.addController(); err != nil {
-		return nil, err
+	if err := t.Init(n.router, ""); err != nil {
+		log.WARN.Println(err)
+		return nil, fmt.Errorf("error initializing tenant: %v", err)
 	}
-	//log.Println("c:", t.Controller.URL)
-	if err := t.addWorker(); err != nil {
-		return nil, err
-	}
-	t.addClient()
-	n.tenants[t.Id] = t
-	//j, _ := json.Marshal(t)
-	//log.Println(string(j))
-	INFO.Println("running.")
+	n.tenants[t.ID] = t
+	log.DEBUG.Printf("added tenant %q", t.ID)
 	return t, nil
 }
 
@@ -136,6 +72,7 @@ func (n *Node) Stop() {
 	for _, t := range n.tenants {
 		t.Stop()
 	}
+	log.DEBUG.Println("node stopped")
 }
 
 func (n *Node) ServeHTTP(w http.ResponseWriter, req *http.Request) {

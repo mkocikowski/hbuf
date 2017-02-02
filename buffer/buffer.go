@@ -5,20 +5,20 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 
+	"github.com/mkocikowski/hbuf/log"
 	"github.com/mkocikowski/hbuf/message"
 	"github.com/mkocikowski/hbuf/segment"
 	"github.com/mkocikowski/hbuf/stats"
 )
 
 type Consumer struct {
-	Id string
+	ID string
 	N  int
 }
 
@@ -48,13 +48,20 @@ func DefaultConfig() *Config {
 	}
 }
 
+type Replica struct {
+	ID  string `json:"id"`
+	URL string `json:"-"`
+	Len int    `json:"len"`
+}
+
 type Buffer struct {
 	*Config
-	Id        string `json:"id"`
-	Tenant    string `json:"tenant"`
-	URL       string `json:"url"`
-	Dir       string `json:"dir"`
-	Len       int    `json:"len"`
+	ID        string              `json:"id"`
+	Tenant    string              `json:"tenant"`
+	URL       string              `json:"url"`
+	Path      string              `json:"dir"`
+	Len       int                 `json:"len"`
+	Replicas  map[string]*Replica `json:"replicas"`
 	running   bool
 	consumers map[string]*Consumer
 	segments  []*segment.Segment
@@ -66,7 +73,7 @@ func (b *Buffer) Init() error {
 		b.Config = DefaultConfig()
 	}
 	b.lock = new(sync.Mutex)
-	if err := os.MkdirAll(b.Dir, 0755); err != nil {
+	if err := os.MkdirAll(b.Path, 0755); err != nil {
 		return fmt.Errorf("error creating buffer dir: %v", err)
 	}
 	if err := b.openSegments(); err != nil {
@@ -74,6 +81,7 @@ func (b *Buffer) Init() error {
 	}
 	b.consumers = make(map[string]*Consumer)
 	b.loadConsumers()
+	b.loadReplicas()
 	b.running = true
 	//log.Printf("buffer %q running", b.Dir)
 	return nil
@@ -84,7 +92,7 @@ func (b *Buffer) addSegment() (*segment.Segment, error) {
 		b.segments[len(b.segments)-1].Close()
 	}
 	s := &segment.Segment{
-		Path:           filepath.Join(b.Dir, fmt.Sprintf("segment_%08x", b.Len)),
+		Path:           filepath.Join(b.Path, fmt.Sprintf("segment_%08x", b.Len)),
 		FirstMessageId: b.Len,
 	}
 	err := s.Open(true)
@@ -101,7 +109,7 @@ func (b *Buffer) trimSegments() error {
 		s, b.segments = b.segments[0], b.segments[1:]
 		s.Close()
 		if err := os.Remove(s.Path); err != nil {
-			log.Printf("error removing segment file: %v", err)
+			log.DEBUG.Printf("error removing segment file: %v", err)
 		}
 	}
 	return nil
@@ -109,12 +117,12 @@ func (b *Buffer) trimSegments() error {
 
 func (b *Buffer) openSegments() error {
 	b.segments = make([]*segment.Segment, 0)
-	files, _ := ioutil.ReadDir(b.Dir)
+	files, _ := ioutil.ReadDir(b.Path)
 	for _, f := range files {
 		if !strings.HasPrefix(f.Name(), "segment_") {
 			continue
 		}
-		s := &segment.Segment{Path: filepath.Join(b.Dir, f.Name())}
+		s := &segment.Segment{Path: filepath.Join(b.Path, f.Name())}
 		err := s.Open(false)
 		if err != nil {
 			return fmt.Errorf("error opening segment: %v", err)
@@ -134,7 +142,7 @@ func (b *Buffer) openSegments() error {
 }
 
 func (b *Buffer) loadConsumers() error {
-	d, err := ioutil.ReadFile(filepath.Join(b.Dir, "offsets"))
+	d, err := ioutil.ReadFile(filepath.Join(b.Path, "offsets"))
 	if err != nil {
 		return fmt.Errorf("error reading buffer offsets: %v", err)
 	}
@@ -146,7 +154,7 @@ func (b *Buffer) loadConsumers() error {
 
 func (b *Buffer) saveConsumers() error {
 	j, _ := json.Marshal(b.consumers)
-	if err := ioutil.WriteFile(filepath.Join(b.Dir, "offsets"), j, 0644); err != nil {
+	if err := ioutil.WriteFile(filepath.Join(b.Path, "offsets"), j, 0644); err != nil {
 		return fmt.Errorf("error saving buffer offsets: %v", err)
 	}
 	//log.Printf("saved consumers: %v", b.Dir)
@@ -160,6 +168,27 @@ func (b *Buffer) GetConsumers() []byte {
 	return j
 }
 
+func (b *Buffer) loadReplicas() error {
+	d, err := ioutil.ReadFile(filepath.Join(b.Path, "replicas"))
+	if err != nil {
+		return fmt.Errorf("error reading buffer replicas: %v", err)
+	}
+	if err := json.Unmarshal(d, &b.Replicas); err != nil {
+		return fmt.Errorf("error parsing buffer replicas: %v", err)
+	}
+	//log.DEBUG.Printf("loaded replicas for buffer %q", b.ID)
+	return nil
+}
+
+func (b *Buffer) saveReplicas() error {
+	j, _ := json.Marshal(b.Replicas)
+	if err := ioutil.WriteFile(filepath.Join(b.Path, "replicas"), j, 0644); err != nil {
+		return fmt.Errorf("error saving buffer replicas: %v", err)
+	}
+	log.DEBUG.Printf("saved replicas: %v", filepath.Join(b.Path, "replicas"))
+	return nil
+}
+
 func (b *Buffer) Stop() error {
 	b.running = false
 	b.lock.Lock()
@@ -167,12 +196,17 @@ func (b *Buffer) Stop() error {
 	for _, s := range b.segments {
 		s.Close()
 	}
+	if err := b.saveReplicas(); err != nil {
+		log.WARN.Println(err)
+		return err
+	}
+	log.DEBUG.Printf("buffer %q stopped", b.ID)
 	return nil
 }
 
 func (b *Buffer) Delete() error {
 	b.Stop()
-	return os.RemoveAll(b.Dir)
+	return os.RemoveAll(b.Path)
 }
 
 func (b *Buffer) Write(m *message.Message) error {
@@ -239,7 +273,7 @@ func (b *Buffer) Consume(id string) (*message.Message, error) {
 	defer b.lock.Unlock()
 	c, ok := b.consumers[id]
 	if !ok {
-		c = &Consumer{Id: id}
+		c = &Consumer{ID: id}
 		b.consumers[id] = c
 	}
 	m, err := b.read(c.N)

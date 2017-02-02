@@ -5,18 +5,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/mkocikowski/hbuf/log"
 )
 
 var (
-	INFO   = log.New(os.Stderr, "[INFO] ", 0)
-	DEBUG  = log.New(os.Stderr, "[DEBUG] ", log.Lshortfile)
 	client = &http.Client{
 		Transport: &http.Transport{
 			MaxIdleConnsPerHost: 256,
@@ -76,15 +75,15 @@ func startProducer(p *producerT) {
 			}
 			resp, err := http.Post(p.URL, "text/plain", bytes.NewBufferString(s))
 			if err != nil {
-				DEBUG.Fatalln(err)
+				log.DEBUG.Fatalln(err)
 			}
 			body, err := ioutil.ReadAll(resp.Body)
 			if err != nil {
-				DEBUG.Fatalln(err)
+				log.DEBUG.Fatalln(err)
 			}
 			resp.Body.Close()
 			if resp.StatusCode != http.StatusOK {
-				DEBUG.Fatalln(resp.StatusCode, string(body))
+				log.DEBUG.Fatalln(resp.StatusCode, string(body))
 			}
 			time.Sleep(time.Duration(p.WriteSleepMs) * time.Millisecond)
 		}
@@ -103,18 +102,18 @@ func startConsumer(c *consumerT) {
 			}
 			resp, err := client.Get(c.URL)
 			if err != nil {
-				DEBUG.Fatalln(err)
+				log.DEBUG.Fatalln(err)
 			}
 			body, err := ioutil.ReadAll(resp.Body)
 			if err != nil {
-				DEBUG.Fatalln(err)
+				log.DEBUG.Fatalln(err)
 			}
 			resp.Body.Close()
 			switch resp.StatusCode {
 			case http.StatusOK:
 			case http.StatusNoContent:
 			default:
-				DEBUG.Fatalln(resp.StatusCode, string(body))
+				log.DEBUG.Fatalln(resp.StatusCode, string(body))
 			}
 			time.Sleep(time.Duration(c.ReadSleepMs) * time.Millisecond)
 		}
@@ -139,7 +138,7 @@ func configure(filename string) (*confT, error) {
 func Run(path string, duration time.Duration) {
 	conf, err := configure(path)
 	if err != nil {
-		DEBUG.Fatalf("error loading config: %v", err)
+		log.DEBUG.Fatalf("error loading config: %v", err)
 	}
 	go func() {
 		c := make(chan os.Signal, 1)
@@ -158,6 +157,6 @@ func Run(path string, duration time.Duration) {
 	for _, c := range conf.Consumers {
 		startConsumer(c)
 	}
-	INFO.Printf("running for: %v", duration)
+	log.INFO.Printf("running for: %v", duration)
 	wg.Wait()
 }

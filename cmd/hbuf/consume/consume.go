@@ -3,17 +3,16 @@ package consume
 import (
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"sync"
 	"time"
+
+	"github.com/mkocikowski/hbuf/log"
 )
 
 var (
-	INFO   = log.New(os.Stderr, "[INFO] ", 0)
-	ERROR  = log.New(os.Stderr, "[ERROR] ", log.Lshortfile)
 	client = &http.Client{
 		Transport: &http.Transport{
 			MaxIdleConnsPerHost: 256,
@@ -36,11 +35,11 @@ func startConsumer(url string) {
 			}
 			resp, err := client.Get(url)
 			if err != nil {
-				ERROR.Fatalln(err)
+				log.ERROR.Fatalln(err)
 			}
 			body, err := ioutil.ReadAll(resp.Body)
 			if err != nil {
-				ERROR.Fatalln(err)
+				log.ERROR.Fatalln(err)
 			}
 			resp.Body.Close()
 			switch resp.StatusCode {
@@ -49,7 +48,7 @@ func startConsumer(url string) {
 			case http.StatusNoContent:
 				time.Sleep(100 * time.Millisecond)
 			default:
-				ERROR.Fatalln(resp.StatusCode, string(body))
+				log.ERROR.Fatalln(resp.StatusCode, string(body))
 			}
 		}
 	}()
@@ -64,7 +63,7 @@ func Run(url string) {
 		close(done)
 	}()
 	startConsumer(url)
-	INFO.Println("running.")
+	log.INFO.Println("running.")
 	wg.Wait()
-	INFO.Println("exit.")
+	log.INFO.Println("exit.")
 }

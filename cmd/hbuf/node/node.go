@@ -17,8 +17,8 @@ var (
 func Run() {
 	//INFO.Println("starting...")
 	n := &node.Node{
-		URL: "http://localhost:8080",
-		Dir: "./data",
+		URL:  "http://localhost:8080",
+		Path: "./data",
 	}
 	n.Init()
 	go func() {
@@ -32,8 +32,7 @@ func Run() {
 	}()
 	go func() {
 		n.Load()
-		//n.AddTenant("-", *join)
-		n.AddTenant("-", n.URL)
+		n.AddTenant("-")
 	}()
 	//log.Fatal(http.ListenAndServe(fmt.Sprintf("localhost:%d", *port), n))
 	// https://blog.cloudflare.com/the-complete-guide-to-golang-net-http-timeouts/

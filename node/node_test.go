@@ -11,24 +11,6 @@ import (
 	"time"
 )
 
-//func TestCluster(t *testing.T) {
-//
-//	s1 := NewServer("")
-//	ts1 := httptest.NewServer(s1)
-//	defer ts1.Close()
-//	s1.URL = ts1.URL
-//	te1, _ := s1.AddTenant("default", "")
-//	log.Printf("%#v", te1.Controller)
-//
-//	s2 := NewServer("")
-//	ts2 := httptest.NewServer(s2)
-//	defer ts2.Close()
-//	s2.URL = ts2.URL
-//	te2, _ := s2.AddTenant("default", ts1.URL)
-//	log.Printf("%#v", te2.Controller)
-//
-//}
-
 func TestNode(t *testing.T) {
 	log.SetFlags(log.Lshortfile)
 
@@ -39,21 +21,22 @@ func TestNode(t *testing.T) {
 	log.Println(dir)
 	//defer os.RemoveAll(dir)
 
-	n := &Node{Dir: dir}
+	n := &Node{Path: dir}
 	ts := httptest.NewServer(n)
 	defer ts.Close()
 	n.URL = ts.URL
 	n.Init()
 
-	tenant, err := n.AddTenant("-", "")
+	tenant, err := n.AddTenant("-")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// don't allow duplicates
-	_, err = n.AddTenant("-", "")
+	_, err = n.AddTenant("-")
 	if err == nil {
 		t.Fatalf("expected error, didn't get it")
 	}
+	log.Println(err)
 
 	resp, _ := http.Post(tenant.Client.URL+"/topics/foo", "text/plain", bytes.NewBufferString("bar"))
 	if resp.StatusCode != http.StatusOK {
@@ -77,8 +60,10 @@ func TestNode(t *testing.T) {
 	n.Stop()
 	ts.Close()
 
+	log.Println("-----------------------------------------------")
+
 	// make sure the server loads saved data
-	n = &Node{Dir: dir}
+	n = &Node{Path: dir}
 	ts = httptest.NewServer(n)
 	defer ts.Close()
 	n.URL = ts.URL
@@ -86,7 +71,7 @@ func TestNode(t *testing.T) {
 	n.Load()
 
 	// don't allow duplicates; tenant should have been loaded from disk
-	_, err = n.AddTenant("-", "")
+	_, err = n.AddTenant("-")
 	if err == nil {
 		t.Fatalf("expected error, didn't get it")
 	}
@@ -143,13 +128,13 @@ func TestParallel(t *testing.T) {
 	log.Println(dir)
 	//defer os.RemoveAll(dir)
 
-	n := &Node{Dir: dir}
+	n := &Node{Path: dir}
 	ts := httptest.NewServer(n)
 	defer ts.Close()
 	n.URL = ts.URL
 	n.Init()
 
-	tenant, err := n.AddTenant("-", "")
+	tenant, err := n.AddTenant("-")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

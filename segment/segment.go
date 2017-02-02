@@ -4,20 +4,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"sync"
 	"time"
 
+	"github.com/mkocikowski/hbuf/log"
 	"github.com/mkocikowski/hbuf/message"
 )
 
 const (
 	DEFAULT_OFFSET_CACHE_SIZE = 1 << 10
-)
-
-var (
-	DEBUG = log.New(os.Stderr, "[DEBUG] ", log.Lshortfile)
 )
 
 type Config struct {
@@ -67,11 +63,11 @@ func (s *Segment) Open(append bool) error {
 	if err != nil {
 		return fmt.Errorf("error opening segment file for reading: %v", err)
 	}
-	s.FirstMessageId = m.Id
+	s.FirstMessageId = m.ID
 	s.MessageCount = s.count()
 	s.SizeB, _ = s.reader.Seek(0, 2)
 	j, _ := json.Marshal(s)
-	DEBUG.Println(string(j))
+	log.DEBUG.Println(string(j))
 	return nil
 }
 
@@ -116,7 +112,7 @@ func (s *Segment) read() (*message.Message, error) {
 	headLen := currentOffset - startOffset
 	bodyLen := recordLen - (headLen - 8) // first 8 bytes is the record byte size
 	m := &message.Message{
-		Id:   int(id),
+		ID:   int(id),
 		Type: typ,
 		Body: make([]byte, bodyLen),
 	}
@@ -180,7 +176,7 @@ var ErrorSegmentClosed = fmt.Errorf("segment closed")
 var ErrorOutOfBounds = fmt.Errorf("message id out of segment bounds")
 
 func (s *Segment) write(m *message.Message) error {
-	body := fmt.Sprintf(" %d %d %q\n%s\n", m.Id, time.Now().UnixNano(), m.Type, string(m.Body))
+	body := fmt.Sprintf(" %d %d %q\n%s\n", m.ID, time.Now().UnixNano(), m.Type, string(m.Body))
 	head := fmt.Sprintf("%08x", int32(len(body)))
 	_, err := s.writer.WriteString(head + body)
 	if err != nil {
@@ -197,7 +193,7 @@ func (s *Segment) Write(m *message.Message) error {
 	if s.writer == nil {
 		return ErrorSegmentClosed
 	}
-	m.Id = s.FirstMessageId + s.MessageCount
+	m.ID = s.FirstMessageId + s.MessageCount
 	if err := s.write(m); err != nil {
 		return fmt.Errorf("error writing message to segment: %s", err)
 	}

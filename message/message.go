@@ -6,7 +6,7 @@ type Location struct {
 }
 
 type Message struct {
-	Id   int
+	ID   int
 	Type string
 	Body []byte
 }

@@ -42,8 +42,8 @@ func TestReadWrite(t *testing.T) {
 		if err := s.Write(m); err != nil {
 			t.Fatal(err)
 		}
-		if m.Id != test.n {
-			t.Fatalf("unexpected sequence number: %v", m.Id)
+		if m.ID != test.n {
+			t.Fatalf("unexpected sequence number: %v", m.ID)
 		}
 	}
 	for i, test := range tests {
@@ -80,8 +80,8 @@ func TestReadWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.Id != 8 {
-		t.Fatalf("unexpected sequence number: %v", m.Id)
+	if m.ID != 8 {
+		t.Fatalf("unexpected sequence number: %v", m.ID)
 	}
 
 	s.Close()
@@ -172,7 +172,7 @@ func BenchmarkWrite(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		body := bytes.Repeat([]byte("x"), rand.Intn(1<<10))
-		m := &message.Message{Id: s.MessageCount, Type: "text/plain", Body: body}
+		m := &message.Message{ID: s.MessageCount, Type: "text/plain", Body: body}
 		err := s.Write(m)
 		if err != nil {
 			b.Fatal(err)

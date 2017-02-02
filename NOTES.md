@@ -41,7 +41,7 @@ TODO: set up explicit "expectations" and plan / test agaist them:
 - max number of buffers / worker
 - max number of buffers / topic
 
-
+UUIDs. good ardument for having new UUID for each node every time it starts up is that way if a VM with a running node is snapshotted and then restarted on a new machine, there will be no duplicates in the cluster. TODO: think though what would happen in this situation - if someone took a snapshot, and then fired it up on another machine, and had it join the same cluster - what would happen to the duplicated buffers?
 
 
 see: https://github.com/redis/redis-rcp/blob/master/RCP11.md
