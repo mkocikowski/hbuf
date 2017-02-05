@@ -11,6 +11,9 @@ hbuf:
 		-ldflags "-X main.Version=$(VERSION) -X main.BuildHash=$(HASH) -X main.BuildDate=$(DATE)" \
 		'github.com/mkocikowski/hbuf/cmd/hbuf'
 
+test:
+	go test ./... -short
+
 clean:
 	rm -fr data
 

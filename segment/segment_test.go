@@ -25,7 +25,7 @@ func TestReadWrite(t *testing.T) {
 	//defer os.RemoveAll(dir)
 
 	s := &Segment{Path: filepath.Join(dir, "segment_0"), FirstMessageId: 5}
-	s.Open(true)
+	s.Open()
 
 	var m *message.Message
 
@@ -58,7 +58,8 @@ func TestReadWrite(t *testing.T) {
 	s.Close()
 
 	s = &Segment{Path: filepath.Join(dir, "segment_0")}
-	s.Open(false)
+	s.Open()
+	s.Close() // closing for writes
 	if s.FirstMessageId != 5 {
 		t.Fatalf("expected 5, got %d", s.FirstMessageId)
 	}
@@ -74,7 +75,7 @@ func TestReadWrite(t *testing.T) {
 	s.Close()
 
 	s = &Segment{Path: filepath.Join(dir, "segment_0")}
-	s.Open(true)
+	s.Open()
 	m = &message.Message{Type: "text/plain", Body: []byte("monkey")}
 	err = s.Write(m)
 	if err != nil {
@@ -97,7 +98,7 @@ func TestRWParallel(t *testing.T) {
 	//defer os.RemoveAll(dir)
 
 	s := &Segment{Path: filepath.Join(dir, "segment_0")}
-	s.Open(true)
+	s.Open()
 
 	N := 1 << 10
 
@@ -167,7 +168,7 @@ func BenchmarkWrite(b *testing.B) {
 	defer os.RemoveAll(dir)
 
 	s := &Segment{Path: filepath.Join(dir, "segment_0")}
-	s.Open(true)
+	s.Open()
 	defer s.Close()
 
 	for i := 0; i < b.N; i++ {
@@ -190,7 +191,7 @@ func BenchmarkRead(b *testing.B) {
 	defer os.RemoveAll(dir)
 
 	s := &Segment{Path: filepath.Join(dir, "segment_0")}
-	s.Open(true)
+	s.Open()
 	defer s.Close()
 
 	N := 10000

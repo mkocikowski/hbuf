@@ -80,6 +80,7 @@ func (c *Controller) Init() (*Controller, error) {
 		{`/topics/{topic:[a-zA-Z0-9_\-]{1,256}}`, []string{"GET"}, c.handleGetTopic, ""},
 		{"/buffers", []string{"POST"}, c.handleRegisterBuffer, ""},
 		{"/buffers", []string{"GET"}, c.handleGetBuffers, ""},
+		{"/buffers/{buffer:[a-f0-9]{16}}", []string{"GET"}, c.handleGetBuffer, ""},
 	}
 	//
 	if _, err := os.Stat(c.Path); os.IsNotExist(err) {
@@ -199,6 +200,18 @@ func (c *Controller) handleGetBuffers(req *http.Request) *router.Response {
 	c.lock.Lock()
 	j, _ := json.Marshal(c.buffers)
 	c.lock.Unlock()
+	return &router.Response{Body: j}
+}
+
+func (c *Controller) handleGetBuffer(req *http.Request) *router.Response {
+	//
+	c.lock.Lock()
+	b, ok := c.buffers[mux.Vars(req)["buffer"]]
+	c.lock.Unlock()
+	if !ok {
+		return &router.Response{StatusCode: http.StatusNotFound}
+	}
+	j, _ := json.Marshal(b)
 	return &router.Response{Body: j}
 }
 

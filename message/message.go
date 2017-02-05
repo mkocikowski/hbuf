@@ -6,7 +6,8 @@ type Location struct {
 }
 
 type Message struct {
-	ID   int
-	Type string
-	Body []byte
+	ID    int
+	Type  string
+	Body  []byte
+	Error chan error
 }

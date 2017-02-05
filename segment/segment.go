@@ -38,17 +38,18 @@ func (s Asc) Len() int           { return len(s) }
 func (s Asc) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 func (s Asc) Less(i, j int) bool { return s[i].FirstMessageId < s[j].FirstMessageId }
 
-func (s *Segment) Open(append bool) error {
+func (s *Segment) Open() error {
+	//
 	s.lock = new(sync.Mutex)
 	s.offsets = make(map[int]int64)
 	s.lru = make([]int, 0, DEFAULT_OFFSET_CACHE_SIZE)
+	//
 	var err error
-	if append {
-		s.writer.Close()
-		s.writer, err = os.OpenFile(s.Path, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
-		if err != nil {
-			return fmt.Errorf("error opening segment file for writing: %v", err)
-		}
+	s.writer.Close()
+	// create segment file if it doesn't exist
+	s.writer, err = os.OpenFile(s.Path, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
+	if err != nil {
+		return fmt.Errorf("error opening segment file for writing: %v", err)
 	}
 	s.reader.Close()
 	s.reader, err = os.Open(s.Path)

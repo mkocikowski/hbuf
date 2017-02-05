@@ -83,10 +83,11 @@ func (w *Worker) loadBuffers() error {
 	for _, f := range files {
 		uid := f.Name()
 		b := &buffer.Buffer{
-			ID:     uid,
-			URL:    w.URL + "/buffers/" + uid,
-			Tenant: w.Tenant,
-			Path:   filepath.Join(w.Path, "buffers", uid),
+			ID:         uid,
+			URL:        w.URL + "/buffers/" + uid,
+			Controller: w.Controller,
+			Tenant:     w.Tenant,
+			Path:       filepath.Join(w.Path, "buffers", uid),
 		}
 		if err := b.Init(); err != nil {
 			log.WARN.Printf("error initializing buffer from disk: %v", err)
@@ -112,17 +113,14 @@ func (w *Worker) registerWithController() error {
 		return err
 	}
 	if resp.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("error registering worker with controller: (%d) %v", resp.StatusCode, string(body))
+		return fmt.Errorf("error registering worker: (%d) %v", resp.StatusCode, string(body))
 	}
 	//
 	for _, b := range w.buffers {
 		c := controller.Buffer{
 			ID:       b.ID,
 			URL:      b.URL,
-			Replicas: make([]string, 0),
-		}
-		for _, r := range b.Replicas {
-			c.Replicas = append(c.Replicas, r.ID)
+			Replicas: b.Replicas(),
 		}
 		j, _ := json.Marshal(c)
 		resp, err := client.Post(w.Controller+"/buffers", "application/json", bytes.NewBuffer(j))
@@ -135,7 +133,7 @@ func (w *Worker) registerWithController() error {
 			return err
 		}
 		if resp.StatusCode != http.StatusNoContent {
-			return fmt.Errorf("error registering buffer with controller: (%d) %v", resp.StatusCode, string(body))
+			return fmt.Errorf("error registering buffer: (%d) %v", resp.StatusCode, string(body))
 		}
 	}
 	return nil
@@ -160,15 +158,17 @@ func (w *Worker) handleGetInfo(req *http.Request) *router.Response {
 }
 
 func (w *Worker) handleCreateBuffer(req *http.Request) *router.Response {
+	//
 	uid := util.Uid()
 	b := &buffer.Buffer{
-		ID:     uid,
-		URL:    w.URL + "/buffers/" + uid,
-		Tenant: w.Tenant,
-		Path:   filepath.Join(w.Path, "buffers", uid),
+		ID:         uid,
+		URL:        w.URL + "/buffers/" + uid,
+		Controller: w.Controller,
+		Tenant:     w.Tenant,
+		Path:       filepath.Join(w.Path, "buffers", uid),
 	}
 	if err := b.Init(); err != nil {
-		return &router.Response{Error: fmt.Errorf("error creating buffer: %v", err), StatusCode: http.StatusInternalServerError}
+		return &router.Response{Error: fmt.Errorf("error creating buffer: %v", err)}
 	}
 	w.lock.Lock()
 	w.buffers[b.ID] = b
@@ -209,10 +209,7 @@ func (w *Worker) handleSetReplicas(req *http.Request) *router.Response {
 	if err := json.Unmarshal(body, &replicas); err != nil {
 		return &router.Response{Error: fmt.Errorf("error parsing set replica body: %v", err)}
 	}
-	b.Replicas = make(map[string]*buffer.Replica)
-	for _, r := range replicas {
-		b.Replicas[r] = &buffer.Replica{ID: r}
-	}
+	b.SetReplicas(replicas)
 	log.DEBUG.Printf("set replicas %q for buffer %q", replicas, b.ID)
 	// TODO: should this call the replicas to see what's up?
 	return &router.Response{StatusCode: http.StatusOK}
@@ -243,20 +240,19 @@ func (w *Worker) handleGetBuffer(req *http.Request) *router.Response {
 }
 
 func (w *Worker) handleWriteToBuffer(req *http.Request) *router.Response {
+	w.lock.Lock()
+	b, ok := w.buffers[mux.Vars(req)["buffer"]]
+	w.lock.Unlock()
+	if !ok {
+		log.DEBUG.Println("couldn't find buffer:", mux.Vars(req)["buffer"])
+		return &router.Response{StatusCode: http.StatusNotFound}
+	}
 	//dump, _ := httputil.DumpRequest(req, true)
 	//log.Println(string(dump))
 	body, err := ioutil.ReadAll(req.Body)
 	if err != nil {
 		log.DEBUG.Println(err)
 		return &router.Response{Error: fmt.Errorf("error reading message body: %v", err)}
-	}
-	buffer := mux.Vars(req)["buffer"]
-	w.lock.Lock()
-	b, ok := w.buffers[buffer]
-	w.lock.Unlock()
-	if !ok {
-		log.DEBUG.Println("couldn't find buffer:", buffer)
-		return &router.Response{Error: fmt.Errorf("buffer %q not found", buffer), StatusCode: http.StatusNotFound}
 	}
 	m := &message.Message{
 		Type: req.Header.Get("Content-Type"),
@@ -265,7 +261,7 @@ func (w *Worker) handleWriteToBuffer(req *http.Request) *router.Response {
 	if err := b.Write(m); err != nil {
 		// theoretically the buffer may have been destroyed in the mean time
 		log.DEBUG.Println("error writing message body to disk: %v", err)
-		return &router.Response{Error: fmt.Errorf("error writing message body: %v", err), StatusCode: http.StatusInternalServerError}
+		return &router.Response{Error: fmt.Errorf("error writing message body: %v", err)}
 	}
 	return &router.Response{StatusCode: http.StatusOK}
 }
@@ -281,11 +277,11 @@ func (w *Worker) handleReadFromBuffer(req *http.Request) *router.Response {
 	b, ok := w.buffers[buffer]
 	w.lock.Unlock()
 	if !ok {
-		return &router.Response{Error: fmt.Errorf("buffer %q not found", buffer), StatusCode: http.StatusNotFound}
+		return &router.Response{StatusCode: http.StatusNotFound}
 	}
 	m, err := b.Read(i)
 	if err != nil {
-		return &router.Response{Error: fmt.Errorf("error reading from buffer %q: %v", buffer, err), StatusCode: http.StatusInternalServerError}
+		return &router.Response{Error: fmt.Errorf("error reading from buffer %q: %v", buffer, err)}
 	}
 	return &router.Response{Body: m.Body, ContentType: m.Type}
 }
@@ -296,7 +292,7 @@ func (w *Worker) handleConsumeFromBuffer(req *http.Request) *router.Response {
 	b, ok := w.buffers[buffer]
 	w.lock.Unlock()
 	if !ok {
-		return &router.Response{Error: fmt.Errorf("buffer %q not found", buffer), StatusCode: http.StatusNotFound}
+		return &router.Response{StatusCode: http.StatusNotFound}
 	}
 	consumer := mux.Vars(req)["consumer"]
 	if consumer == "" {
@@ -310,12 +306,12 @@ func (w *Worker) handleConsumeFromBuffer(req *http.Request) *router.Response {
 }
 
 func (w *Worker) handleGetOffsets(req *http.Request) *router.Response {
-	buffer := mux.Vars(req)["buffer"]
+	//
 	w.lock.Lock()
-	b, ok := w.buffers[buffer]
+	b, ok := w.buffers[mux.Vars(req)["buffer"]]
 	w.lock.Unlock()
 	if !ok {
-		return &router.Response{Error: fmt.Errorf("buffer %q not found", buffer), StatusCode: http.StatusNotFound}
+		return &router.Response{StatusCode: http.StatusNotFound}
 	}
-	return &router.Response{Body: b.GetConsumers()}
+	return &router.Response{Body: b.Consumers()}
 }
