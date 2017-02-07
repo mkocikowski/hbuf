@@ -160,7 +160,7 @@ func (c *Client) handleWriteToTopic(req *http.Request) *router.Response {
 	// create topic if needed
 	if !ok {
 		if err := c.createTopic(topic); err != nil {
-			return &router.Response{Error: err}
+			return &router.Response{Error: fmt.Errorf("error creating topic: %v", err)}
 		}
 		err := c.updateMetadata()
 		if err != nil {
@@ -218,12 +218,15 @@ func (c *Client) handleConsumeFromTopic(req *http.Request) *router.Response {
 	topics := strings.Split(mux.Vars(req)["topic"], ",")
 	for _, t := range topics {
 		if !util.TopicNameRE.MatchString(t) {
-			return &router.Response{Error: fmt.Errorf("topic name must match %q", util.TopicNameRE), StatusCode: http.StatusBadRequest}
+			return &router.Response{
+				Error:      fmt.Errorf("topic name must match %q", util.TopicNameRE),
+				StatusCode: http.StatusBadRequest,
+			}
 		}
 	}
 	// TODO: this is a huge performance hit; metadata should be upated concurrently, not per request
 	if err := c.updateMetadata(); err != nil {
-		return &router.Response{Error: fmt.Errorf("error consuming: %v", err), StatusCode: http.StatusInternalServerError}
+		return &router.Response{Error: fmt.Errorf("error consuming: %v", err)}
 	}
 	// make a local copy of buffers
 	c.lock.Lock()
@@ -247,7 +250,10 @@ func (c *Client) handleConsumeFromTopic(req *http.Request) *router.Response {
 		consumer = "-"
 	}
 	if !util.TopicNameRE.MatchString(consumer) {
-		return &router.Response{Error: fmt.Errorf("invalid consumer name"), StatusCode: http.StatusBadRequest}
+		return &router.Response{
+			Error:      fmt.Errorf("invalid consumer name"),
+			StatusCode: http.StatusBadRequest,
+		}
 	}
 	n := rand.Intn(len(buffers))
 	for i := n; i < n+len(buffers); i++ {
@@ -256,16 +262,23 @@ func (c *Client) handleConsumeFromTopic(req *http.Request) *router.Response {
 		//DEBUG.Println(url)
 		resp, err := client.Post(url, "", nil)
 		if err != nil {
-			return &router.Response{Error: fmt.Errorf("error consuming: %v", err), StatusCode: http.StatusInternalServerError}
+			log.DEBUG.Printf("error making consume post request: %v", err)
+			return &router.Response{Error: fmt.Errorf("error connecting to buffer: %v", err)}
 		}
 		body, err := ioutil.ReadAll(resp.Body)
 		resp.Body.Close()
-		if resp.StatusCode == http.StatusOK {
-			if err != nil {
-				return &router.Response{Error: fmt.Errorf("error consuming: %v", err), StatusCode: http.StatusInternalServerError}
-			}
-			return &router.Response{Body: body, ContentType: resp.Header.Get("Content-Type")}
+		if resp.StatusCode == http.StatusNoContent {
+			continue
 		}
+		if resp.StatusCode != http.StatusOK {
+			log.DEBUG.Printf("error consuming from buffer: (%d) %v", resp.StatusCode, err)
+			continue
+		}
+		if err != nil {
+			log.WARN.Printf("error reading reponse body for consumed message: %v", err)
+			return &router.Response{Error: fmt.Errorf("error reading buffer response: %v", err)}
+		}
+		return &router.Response{Body: body, ContentType: resp.Header.Get("Content-Type")}
 	}
 	return &router.Response{StatusCode: http.StatusNoContent}
 }

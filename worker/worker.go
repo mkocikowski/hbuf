@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"os"
@@ -18,13 +19,14 @@ import (
 	"github.com/mkocikowski/hbuf/log"
 	"github.com/mkocikowski/hbuf/message"
 	"github.com/mkocikowski/hbuf/router"
+	"github.com/mkocikowski/hbuf/segment"
 	"github.com/mkocikowski/hbuf/util"
 )
 
 var (
 	client = &http.Client{
 		Transport: &http.Transport{
-			MaxIdleConnsPerHost: 256,
+			MaxIdleConnsPerHost: 1000,
 		},
 		Timeout: 5 * time.Second,
 	}
@@ -174,6 +176,7 @@ func (w *Worker) handleCreateBuffer(req *http.Request) *router.Response {
 	w.buffers[b.ID] = b
 	w.lock.Unlock()
 	j, _ := json.Marshal(b)
+	log.DEBUG.Printf("created buffer %q", b.ID)
 	return &router.Response{Body: j, StatusCode: http.StatusCreated}
 }
 
@@ -287,6 +290,7 @@ func (w *Worker) handleReadFromBuffer(req *http.Request) *router.Response {
 }
 
 func (w *Worker) handleConsumeFromBuffer(req *http.Request) *router.Response {
+	//
 	buffer := mux.Vars(req)["buffer"]
 	w.lock.Lock()
 	b, ok := w.buffers[buffer]
@@ -299,8 +303,15 @@ func (w *Worker) handleConsumeFromBuffer(req *http.Request) *router.Response {
 		consumer = "-"
 	}
 	m, err := b.Consume(consumer)
+	if err == segment.ErrorOutOfBounds {
+		return &router.Response{StatusCode: http.StatusNoContent}
+	}
+	if err == io.EOF {
+		return &router.Response{StatusCode: http.StatusNoContent}
+	}
 	if err != nil {
-		return &router.Response{Error: fmt.Errorf("error consuming from buffer %q, consumer id %q: %v", buffer, consumer, err), StatusCode: http.StatusInternalServerError}
+		log.DEBUG.Printf("error consuming from buffer %q, consumer id %q: %v", buffer, consumer, err)
+		return &router.Response{Error: fmt.Errorf("error consuming from buffer: %v", err)}
 	}
 	return &router.Response{Body: m.Body, ContentType: m.Type}
 }

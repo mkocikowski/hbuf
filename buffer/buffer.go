@@ -174,7 +174,10 @@ func (b *Buffer) SetReplicas(replicas []string) {
 		}
 		n := &Replica{ID: r, Controller: b.Controller}
 		n.Init()
+		b.lock.Lock()
 		b.replicas[r] = n
+		b.lock.Unlock()
+		log.DEBUG.Printf("set replica %q for buffer %q", n.ID, b.ID)
 	}
 }
 
@@ -184,6 +187,7 @@ func (b *Buffer) loadReplicas() error {
 	d, err := ioutil.ReadFile(f)
 	switch {
 	case os.IsNotExist(err):
+		log.DEBUG.Printf("no replicas on disk for buffer %q", b.ID)
 		return nil
 	case err != nil:
 		return fmt.Errorf("error reading buffer replicas: %v", err)
@@ -209,8 +213,11 @@ func (b *Buffer) saveReplicas() error {
 
 func (b *Buffer) Stop() {
 	//
+	b.lock.Lock()
 	b.running = false
 	close(b.done)
+	close(b.data)
+	b.lock.Unlock()
 	for _, s := range b.segments {
 		s.Close()
 	}
@@ -288,7 +295,6 @@ func (b *Buffer) write(m *message.Message) error {
 	//
 	var err error
 	b.lock.Lock()
-	defer b.lock.Unlock()
 	s, err := b.getSegment()
 	if err != nil {
 		return err
@@ -297,26 +303,42 @@ func (b *Buffer) write(m *message.Message) error {
 		return err
 	}
 	b.Len += 1
-
-	// TODO: write to replicas
+	replicas := make([]*Replica, 0, len(b.replicas))
 	for _, r := range b.replicas {
+		replicas = append(replicas, r)
+	}
+	b.lock.Unlock()
+	// TODO: write to replicas
+	for _, r := range replicas {
 		n := &message.Message{m.ID, m.Type, m.Body, make(chan error, 1)}
 		r.data <- n
+		err := <-n.Error
+		if err != nil {
+			log.WARN.Println(err)
+		}
 	}
 	return nil
 }
 
 func (b *Buffer) writer() {
+	log.DEBUG.Printf("started writer for buffer %q", b.ID)
 	for m := range b.data {
 		err := b.write(m)
 		if err != nil {
+			log.ERROR.Println(err)
 			m.Error <- err
 		}
 		close(m.Error)
 	}
+	for _, r := range b.replicas {
+		r.Stop()
+	}
 }
 
 func (b *Buffer) Write(m *message.Message) error {
+	if !b.running {
+		return fmt.Errorf("buffer closed")
+	}
 	m.Error = make(chan error)
 	b.data <- m
 	return <-m.Error
@@ -336,6 +358,7 @@ func (b *Buffer) read(id int) (*message.Message, error) {
 		}
 		i = j
 	}
+	// returns segment.ErrorOutOfBounds
 	return b.segments[i].Read(id)
 }
 

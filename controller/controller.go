@@ -19,7 +19,7 @@ import (
 var (
 	client = &http.Client{
 		Transport: &http.Transport{
-			MaxIdleConnsPerHost: 256,
+			MaxIdleConnsPerHost: 5000,
 		},
 		Timeout: 5 * time.Second,
 	}
@@ -321,6 +321,7 @@ func (c *Controller) handleCreateTopic(req *http.Request) *router.Response {
 	}
 	t, err := c.createTopic(id)
 	if err != nil {
+		log.DEBUG.Printf("error creating topic: %v", err)
 		return &router.Response{
 			Error:      fmt.Errorf("error creating topic: %v", err),
 			StatusCode: http.StatusInternalServerError,

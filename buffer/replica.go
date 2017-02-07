@@ -18,6 +18,7 @@ type Replica struct {
 	Controller string `json:"-"`
 	Len        int    `json:"len"`
 	lock       *sync.Mutex
+	wg         sync.WaitGroup
 	data       chan *message.Message
 	done       chan bool
 }
@@ -28,7 +29,9 @@ func (r *Replica) Init() error {
 	r.data = make(chan *message.Message)
 	r.done = make(chan bool)
 	// TODO: add "health check": make sure the replica is up to date, catch up if needed
-	go r.update()
+	r.wg.Add(1)
+	go r.updater()
+	r.wg.Add(1)
 	go r.writer()
 	return nil
 }
@@ -36,27 +39,29 @@ func (r *Replica) Init() error {
 func (r *Replica) Stop() {
 	close(r.data)
 	close(r.done)
+	// TODO: use wait group to make sure all goroutines exited?
+	r.wg.Wait()
+	log.DEBUG.Printf("replica %q stopped", r.ID)
 }
 
-func (r *Replica) update() {
+func (r *Replica) updater() {
 	//
+	defer r.wg.Done()
 	log.DEBUG.Printf("starting updater for replica %q", r.ID)
 	for {
-		select {
-		case <-r.done:
-			return
-		default:
-		}
-		if err := r.url(); err != nil {
+		if err := r.update(); err != nil {
 			log.WARN.Println(err)
-			time.Sleep(1 * time.Second)
-		} else {
-			time.Sleep(5 * time.Second)
+		}
+		select {
+		case <-time.After(1 * time.Second):
+		case <-r.done:
+			log.DEBUG.Printf("stopped replica %q updater", r.ID)
+			return
 		}
 	}
 }
 
-func (r *Replica) url() error {
+func (r *Replica) update() error {
 	//
 	r.lock.Lock()
 	c := r.Controller
@@ -75,24 +80,26 @@ func (r *Replica) url() error {
 		log.DEBUG.Printf("set url for replica %q: %v", r.ID, r.URL)
 	}
 	r.lock.Unlock()
+	log.DEBUG.Printf("updated url for replica %q", r.ID)
 	return nil
 }
 
 func (r *Replica) writer() {
+	//
+	defer r.wg.Done()
 	log.DEBUG.Printf("starting writer for replica %q", r.ID)
+	// TODO: this logic needs to be changed
 	for m := range r.data {
-		for {
-			if m.Error == nil {
-				m.Error = make(chan error, 1)
-			}
-			_, err := curl.Post(r.URL, m.Type, bytes.NewBuffer(m.Body))
-			if err == nil {
-				r.Len += 1
-				close(m.Error)
-				break
-			}
-			log.WARN.Printf("error replicating message to %q / %q : %v", r.ID, r.URL, err)
-			time.Sleep(1 * time.Second)
+		r.lock.Lock()
+		url := r.URL
+		r.lock.Unlock()
+		_, err := curl.Post(url, m.Type, bytes.NewBuffer(m.Body))
+		if err != nil {
+			m.Error <- err
+			continue
 		}
+		r.Len += 1
+		close(m.Error)
 	}
+	log.DEBUG.Printf("stopped replica %q writer", r.ID)
 }

@@ -52,7 +52,7 @@ func (n *Node) Load() {
 func (n *Node) AddTenant(id string) (*tenant.Tenant, error) {
 	//
 	if _, ok := n.tenants[id]; ok {
-		return nil, fmt.Errorf("tenant %q already exists", id)
+		return nil, fmt.Errorf("tenant already exists")
 	}
 	t := &tenant.Tenant{
 		ID:   id,

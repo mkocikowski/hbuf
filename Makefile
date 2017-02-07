@@ -38,6 +38,6 @@ hbuf-%-amd64: ./cmd/hbuf/main.go
 
 
 net:
-	#netstat -a -f inet -p tcp
+	netstat -n -a -f inet -p tcp
 	lsof -a -c 'hbuf' -nP -i4TCP@127.0.0.1
 

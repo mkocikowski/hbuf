@@ -43,7 +43,7 @@ TODO: set up explicit "expectations" and plan / test agaist them:
 
 UUIDs. good ardument for having new UUID for each node every time it starts up is that way if a VM with a running node is snapshotted and then restarted on a new machine, there will be no duplicates in the cluster. TODO: think though what would happen in this situation - if someone took a snapshot, and then fired it up on another machine, and had it join the same cluster - what would happen to the duplicated buffers?
 
-TAGS. have ability to "tag" messages, say with "x-hbuf-tag:" header; these tags could be used for filtering messages on the worker side, retrieving only matching messages; so say these are log items, you could tag them per host, and then retrieve only consume messages matching given host.
+TAGS. have ability to "tag" messages, say with "x-hbuf-tag:" header; these tags could be used for filtering messages on the worker side, retrieving only matching messages; so say these are log items, you could tag them per host, and then retrieve only consume messages matching given host. this filtering could significantly reduce network traffic.
 
 KEYS. routing keys. "x-hbuf-key:" header.
 

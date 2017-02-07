@@ -126,20 +126,18 @@ func TestParallel(t *testing.T) {
 	// https://github.com/golang/go/issues/16012#issuecomment-224948823
 	http.DefaultTransport.(*http.Transport).MaxIdleConnsPerHost = 50000
 
-	var readerWG sync.WaitGroup
-	var writerWG sync.WaitGroup
-	readerDone := make(chan bool)
-	writerDone := make(chan bool)
+	var wg sync.WaitGroup
+	done := make(chan bool)
 	data := make(chan string)
 
-	for i := 0; i < 5; i++ {
-		writerWG.Add(1)
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
 		time.Sleep(1 * time.Millisecond)
 		go func() {
-			defer writerWG.Done()
+			defer wg.Done()
 			for {
 				select {
-				case <-writerDone:
+				case <-done:
 					return
 				default:
 				}
@@ -152,23 +150,22 @@ func TestParallel(t *testing.T) {
 					log.Println("!!!!!", err)
 					return
 				}
-				body, _ := ioutil.ReadAll(resp.Body)
+				ioutil.ReadAll(resp.Body)
 				resp.Body.Close()
 				if resp.StatusCode != http.StatusOK {
-					log.Println("!!!!!", resp.StatusCode, string(body))
+					log.Println("!!!!!", resp.StatusCode)
 					return
 				}
-				//time.Sleep(10 * time.Millisecond)
+				time.Sleep(1 * time.Millisecond)
 			}
 		}()
 	}
-	log.Println("started all the writers")
 
-	for i := 0; i < 5; i++ {
-		readerWG.Add(1)
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
 		time.Sleep(1 * time.Millisecond)
 		go func() {
-			defer readerWG.Done()
+			defer wg.Done()
 			for {
 				resp, err := http.Get(tenant.Client.URL + "/topics/XXX/next")
 				if err != nil {
@@ -179,43 +176,38 @@ func TestParallel(t *testing.T) {
 				resp.Body.Close()
 				if err != nil {
 					log.Println("!!!!!", err)
-					continue
+					return
 				}
 				if resp.StatusCode == http.StatusNoContent {
 					time.Sleep(10 * time.Millisecond)
 					continue
 				}
 				if resp.StatusCode != http.StatusOK {
-					log.Println("!!!!!", resp.StatusCode, string(body))
-					continue
+					log.Println("!!!!!", resp.StatusCode)
+					return
 				}
 				select {
 				case data <- string(body):
-				case <-readerDone:
+				case <-done:
 					return
 				}
 			}
 		}()
+
 	}
-	log.Println("started all readers")
 
 	for i := 0; i < 10000; i++ {
 		s := <-data
 		if s != "bar" {
 			t.Fatalf("unexpected value: %q", s)
 		}
-		if n := i % 1000; n == 0 {
-			log.Println(i)
-		}
+		log.Println(i)
 	}
-
-	close(readerDone)
-	readerWG.Wait()
-	close(writerDone)
-	writerWG.Wait()
+	close(done)
+	wg.Wait()
 }
 
-func BenchmarkWrite(b *testing.B) {
+func BenchmarkWriteConsumeParallel(b *testing.B) {
 
 	dir, err := ioutil.TempDir("", "hbuf")
 	if err != nil {
@@ -236,14 +228,52 @@ func BenchmarkWrite(b *testing.B) {
 
 	// https://github.com/golang/go/issues/16012#issuecomment-224948823
 	http.DefaultTransport.(*http.Transport).MaxIdleConnsPerHost = 5000
+	var wg sync.WaitGroup
+	data := make(chan []byte)
+	done := make(chan bool)
 
-	for i := 0; i < b.N; i++ {
-		resp, err := http.Post(tenant.Client.URL+"/topics/XXX", "text/plain", bytes.NewBuffer([]byte("foo")))
-		if err != nil {
-			b.Fatal(err)
-		}
-		ioutil.ReadAll(resp.Body)
-		resp.Body.Close()
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		time.Sleep(1 * time.Millisecond)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-done:
+					return
+				default:
+				}
+				http.Post(tenant.Client.URL+"/topics/XXX", "text/plain", bytes.NewBuffer([]byte("foo")))
+				//time.Sleep(5 * time.Millisecond)
+			}
+		}()
 	}
 
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		time.Sleep(1 * time.Millisecond)
+		go func() {
+			defer wg.Done()
+			for {
+				resp, _ := http.Get(tenant.Client.URL + "/topics/XXX/next")
+				body, _ := ioutil.ReadAll(resp.Body)
+				resp.Body.Close()
+				if resp.StatusCode != http.StatusOK {
+					time.Sleep(1 * time.Millisecond)
+					continue
+				}
+				select {
+				case <-done:
+					return
+				case data <- body:
+				}
+			}
+		}()
+	}
+
+	for i := 0; i < b.N; i++ {
+		<-data
+	}
+	close(done)
+	wg.Wait()
 }

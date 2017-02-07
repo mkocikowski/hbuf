@@ -25,8 +25,9 @@ func TestReplica(t *testing.T) {
 
 	r := &Replica{ID: "r1", Controller: manager.URL + "/manager"}
 	r.Init()
+	r.update()
 
-	m := &message.Message{Type: "text/plain", Body: []byte("foo")}
+	m := &message.Message{Type: "text/plain", Body: []byte("foo"), Error: make(chan error)}
 	r.data <- m
 	if err := <-m.Error; err != nil {
 		t.Errorf("unexpected error: %v", err)
