@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
 	"github.com/mkocikowski/hbuf/curl"
-	"github.com/mkocikowski/hbuf/log"
 	"github.com/mkocikowski/hbuf/message"
 )
 
@@ -41,21 +41,21 @@ func (r *Replica) Stop() {
 	close(r.done)
 	// TODO: use wait group to make sure all goroutines exited?
 	r.wg.Wait()
-	log.DEBUG.Printf("replica %q stopped", r.ID)
+	log.Printf("replica %q stopped", r.ID)
 }
 
 func (r *Replica) updater() {
 	//
 	defer r.wg.Done()
-	log.DEBUG.Printf("starting updater for replica %q", r.ID)
+	log.Printf("starting updater for replica %q", r.ID)
 	for {
 		if err := r.update(); err != nil {
-			log.WARN.Println(err)
+			log.Println(err)
 		}
 		select {
 		case <-time.After(1 * time.Second):
 		case <-r.done:
-			log.DEBUG.Printf("stopped replica %q updater", r.ID)
+			log.Printf("stopped replica %q updater", r.ID)
 			return
 		}
 	}
@@ -77,17 +77,17 @@ func (r *Replica) update() error {
 	r.lock.Lock()
 	if r.URL != u.URL {
 		r.URL = u.URL
-		log.DEBUG.Printf("set url for replica %q: %v", r.ID, r.URL)
+		log.Printf("set url for replica %q: %v", r.ID, r.URL)
 	}
 	r.lock.Unlock()
-	log.DEBUG.Printf("updated url for replica %q", r.ID)
+	log.Printf("updated url for replica %q", r.ID)
 	return nil
 }
 
 func (r *Replica) writer() {
 	//
 	defer r.wg.Done()
-	log.DEBUG.Printf("starting writer for replica %q", r.ID)
+	log.Printf("starting writer for replica %q", r.ID)
 	// TODO: this logic needs to be changed
 	for m := range r.data {
 		r.lock.Lock()
@@ -101,5 +101,5 @@ func (r *Replica) writer() {
 		r.Len += 1
 		close(m.Error)
 	}
-	log.DEBUG.Printf("stopped replica %q writer", r.ID)
+	log.Printf("stopped replica %q writer", r.ID)
 }

@@ -39,7 +39,9 @@ func TestBuffer(t *testing.T) {
 	}
 
 	m := &message.Message{Type: "text/plain", Body: []byte("foo")}
-	b.Write(m)
+	if err := b.Write(m); err != nil {
+		t.Fatal(err)
+	}
 
 	x, err := b.Read(0)
 	if err != nil {
@@ -64,7 +66,9 @@ func TestBuffer(t *testing.T) {
 	b.Stop()
 
 	b = &Buffer{ID: uid, Path: dir}
-	b.Init()
+	if err := b.Init(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if b.Len != 1 {
 		t.Fatalf("expected Len==1, got: %v", b.Len)
 	}
@@ -79,7 +83,6 @@ func TestBuffer(t *testing.T) {
 	if x.ID != 0 {
 		t.Fatalf("expected message id==0, got: %v", x.ID)
 	}
-
 	m = &message.Message{Type: "text/plain", Body: []byte("monkey")}
 	err = b.Write(m)
 	if err != nil {

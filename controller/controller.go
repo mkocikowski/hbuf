@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -12,7 +13,6 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/mkocikowski/hbuf/log"
 	"github.com/mkocikowski/hbuf/router"
 )
 
@@ -89,7 +89,7 @@ func (c *Controller) Init() (*Controller, error) {
 	}
 	b, err := ioutil.ReadFile(filepath.Join(c.Path, "topics"))
 	if err != nil {
-		log.WARN.Printf("error reading topics data: %v", err)
+		log.Printf("error reading topics data: %v", err)
 		return c, nil
 	}
 	t := make(map[string]*Topic)
@@ -113,7 +113,7 @@ func (c *Controller) Stop() {
 	os.MkdirAll(c.Path, 0755)
 	j, _ := json.Marshal(c.topics)
 	ioutil.WriteFile(filepath.Join(c.Path, "topics"), j, 0644)
-	log.DEBUG.Printf("controller %q stopped", c.ID)
+	log.Printf("controller %q stopped", c.ID)
 }
 
 //type State struct {
@@ -163,7 +163,7 @@ func (c *Controller) handleRegisterWorker(req *http.Request) *router.Response {
 	c.lock.Lock()
 	c.workers[w.ID] = w
 	c.lock.Unlock()
-	log.DEBUG.Printf("registered worker: %v", w.URL)
+	log.Printf("registered worker: %v", w.URL)
 	return &router.Response{StatusCode: http.StatusNoContent}
 }
 
@@ -191,7 +191,7 @@ func (c *Controller) handleRegisterBuffer(req *http.Request) *router.Response {
 	c.lock.Lock()
 	c.buffers[buff.ID] = buff
 	c.lock.Unlock()
-	log.DEBUG.Printf("registered buffer: %v", buff.URL)
+	log.Printf("registered buffer: %v", buff.URL)
 	return &router.Response{StatusCode: http.StatusNoContent}
 }
 
@@ -321,7 +321,7 @@ func (c *Controller) handleCreateTopic(req *http.Request) *router.Response {
 	}
 	t, err := c.createTopic(id)
 	if err != nil {
-		log.DEBUG.Printf("error creating topic: %v", err)
+		log.Printf("error creating topic: %v", err)
 		return &router.Response{
 			Error:      fmt.Errorf("error creating topic: %v", err),
 			StatusCode: http.StatusInternalServerError,
@@ -386,7 +386,7 @@ func (c *Controller) deleteTopic(id string) error {
 	delete(c.topics, id)
 	for _, b := range t.Buffers {
 		if err := c.deleteBuffer(b); err != nil {
-			log.WARN.Printf("error deleting buffer for topic %q; this buffer is now orphaned: %v", id, err)
+			log.Printf("error deleting buffer for topic %q; this buffer is now orphaned: %v", id, err)
 		}
 	}
 	return nil

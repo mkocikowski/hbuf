@@ -2,8 +2,6 @@ package stats
 
 import (
 	"encoding/json"
-	"log"
-	"os"
 	"sync"
 )
 
@@ -22,12 +20,10 @@ var (
 	stats = make(map[string]*Stat)
 	Stats = make(chan *Stat, 1<<12)
 	lock  = new(sync.Mutex)
-	DEBUG = log.New(os.Stderr, "[DEBUG] ", log.Lshortfile)
 )
 
 func init() {
 	go listen()
-	//DEBUG.Println("started stats listener")
 }
 
 func listen() {

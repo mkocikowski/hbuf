@@ -12,10 +12,6 @@ import (
 	"time"
 )
 
-func init() {
-	log.SetFlags(log.Lshortfile)
-}
-
 func TestNode(t *testing.T) {
 
 	dir, err := ioutil.TempDir("", "hbuf")

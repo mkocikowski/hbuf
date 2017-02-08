@@ -4,14 +4,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"path/filepath"
 
 	"github.com/gorilla/mux"
-	"github.com/mkocikowski/hbuf/log"
 	"github.com/mkocikowski/hbuf/stats"
 	"github.com/mkocikowski/hbuf/tenant"
 )
+
+func init() {
+	log.SetFlags(log.Lshortfile)
+}
 
 type Node struct {
 	URL     string
@@ -21,6 +25,7 @@ type Node struct {
 }
 
 func (n *Node) Init() *Node {
+	//
 	n.tenants = make(map[string]*tenant.Tenant)
 	n.router = mux.NewRouter()
 	//
@@ -36,7 +41,7 @@ func (n *Node) Init() *Node {
 		stats.Reset()
 	}).Methods("DELETE")
 	//
-	log.DEBUG.Printf("starting node %q ...", n.URL)
+	log.Printf("starting node %q ...", n.URL)
 	return n
 }
 
@@ -44,7 +49,7 @@ func (n *Node) Load() {
 	//
 	files, _ := ioutil.ReadDir(filepath.Join(n.Path, "tenants"))
 	for _, f := range files {
-		log.DEBUG.Printf("loading data for tenant %q", f.Name())
+		log.Printf("loading data for tenant %q", f.Name())
 		n.AddTenant(f.Name())
 	}
 }
@@ -60,11 +65,11 @@ func (n *Node) AddTenant(id string) (*tenant.Tenant, error) {
 		Path: filepath.Join(n.Path, "tenants", id),
 	}
 	if err := t.Init(n.router, ""); err != nil {
-		log.WARN.Println(err)
+		log.Println(err)
 		return nil, fmt.Errorf("error initializing tenant: %v", err)
 	}
 	n.tenants[t.ID] = t
-	log.DEBUG.Printf("added tenant %q", t.ID)
+	log.Printf("added tenant %q", t.ID)
 	return t, nil
 }
 
@@ -72,7 +77,7 @@ func (n *Node) Stop() {
 	for _, t := range n.tenants {
 		t.Stop()
 	}
-	log.DEBUG.Println("node stopped")
+	log.Println("node stopped")
 }
 
 func (n *Node) ServeHTTP(w http.ResponseWriter, req *http.Request) {

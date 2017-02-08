@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"math/rand"
 	"net/http"
 	"strings"
@@ -12,7 +13,6 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/mkocikowski/hbuf/log"
 	"github.com/mkocikowski/hbuf/router"
 	"github.com/mkocikowski/hbuf/util"
 )
@@ -187,7 +187,7 @@ func (c *Client) handleWriteToTopic(req *http.Request) *router.Response {
 	}
 	data, err := ioutil.ReadAll(req.Body)
 	if err != nil {
-		log.DEBUG.Printf("couldn't read message body: %v", err)
+		log.Printf("couldn't read message body: %v", err)
 		return &router.Response{Error: fmt.Errorf("error writing to topic: couldn't read message body: %v")}
 	}
 	n := rand.Intn(len(buffers))
@@ -198,18 +198,18 @@ func (c *Client) handleWriteToTopic(req *http.Request) *router.Response {
 		//resp, err := http.Post(b.URL, req.Header.Get("Content-Type"), req.Body)
 		resp, err := client.Post(b.URL, req.Header.Get("Content-Type"), bytes.NewBuffer(data))
 		if err != nil {
-			log.DEBUG.Println(err)
+			log.Println(err)
 			continue
 		}
 		body, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
-			log.DEBUG.Printf("couldn't read response from worker for buffer: %v", err)
+			log.Printf("couldn't read response from worker for buffer: %v", err)
 		}
 		resp.Body.Close()
 		if resp.StatusCode == http.StatusOK {
 			return &router.Response{StatusCode: http.StatusOK}
 		}
-		log.DEBUG.Printf("error response when writing to buffer %q for topic %q: %v", b.ID, topic, string(body))
+		log.Printf("error response when writing to buffer %q for topic %q: %v", b.ID, topic, string(body))
 	}
 	return &router.Response{Error: fmt.Errorf("error writing to topic: couldn't write to any buffer %v", buffers), StatusCode: http.StatusInternalServerError}
 }
@@ -242,7 +242,7 @@ func (c *Client) handleConsumeFromTopic(req *http.Request) *router.Response {
 	}
 	c.lock.Unlock()
 	if len(buffers) == 0 {
-		log.DEBUG.Printf("no buffers for topic[s] %q found", mux.Vars(req)["topic"])
+		log.Printf("no buffers for topic[s] %q found", mux.Vars(req)["topic"])
 		return &router.Response{StatusCode: http.StatusNoContent}
 	}
 	consumer := req.URL.Query().Get("c")
@@ -262,7 +262,7 @@ func (c *Client) handleConsumeFromTopic(req *http.Request) *router.Response {
 		//DEBUG.Println(url)
 		resp, err := client.Post(url, "", nil)
 		if err != nil {
-			log.DEBUG.Printf("error making consume post request: %v", err)
+			log.Printf("error making consume post request: %v", err)
 			return &router.Response{Error: fmt.Errorf("error connecting to buffer: %v", err)}
 		}
 		body, err := ioutil.ReadAll(resp.Body)
@@ -271,11 +271,11 @@ func (c *Client) handleConsumeFromTopic(req *http.Request) *router.Response {
 			continue
 		}
 		if resp.StatusCode != http.StatusOK {
-			log.DEBUG.Printf("error consuming from buffer: (%d) %v", resp.StatusCode, err)
+			log.Printf("error consuming from buffer: (%d) %v", resp.StatusCode, err)
 			continue
 		}
 		if err != nil {
-			log.WARN.Printf("error reading reponse body for consumed message: %v", err)
+			log.Printf("error reading reponse body for consumed message: %v", err)
 			return &router.Response{Error: fmt.Errorf("error reading buffer response: %v", err)}
 		}
 		return &router.Response{Body: body, ContentType: resp.Header.Get("Content-Type")}

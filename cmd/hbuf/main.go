@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"log"
 	"os"
 	"time"
 
@@ -11,7 +12,6 @@ import (
 	"github.com/mkocikowski/hbuf/cmd/hbuf/node"
 	"github.com/mkocikowski/hbuf/cmd/hbuf/produce"
 	"github.com/mkocikowski/hbuf/cmd/hbuf/stress"
-	"github.com/mkocikowski/hbuf/log"
 )
 
 var (
@@ -31,7 +31,7 @@ for dev convenience, to run a "real" server see the "node" command.`
 
 func main() {
 
-	log.INFO.Printf("version: %s build: %s %s", Version, BuildHash, BuildDate)
+	log.Printf("version: %s build: %s %s", Version, BuildHash, BuildDate)
 
 	if len(os.Args) == 1 {
 		node.Run()

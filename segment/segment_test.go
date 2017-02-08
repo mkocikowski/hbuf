@@ -15,6 +15,23 @@ import (
 	"github.com/mkocikowski/hbuf/message"
 )
 
+func TestMarshalUnmarshal(t *testing.T) {
+	//m := &message.Message{ID: 1, TS: time.Now().UTC(), Type: "text/plain", Body: []byte("foo")}
+	m := message.New("text/plain", []byte("foo"))
+	b := marshal(m)
+	log.Println(string(b))
+	n, err := unmarshal(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(m.Body, n.Body) {
+		t.Fatal("unserialized message body doesn't match serialized")
+	}
+	if m.TS != n.TS {
+		t.Fatal("unserialized timestamp body doesn't match serialized")
+	}
+}
+
 func TestReadWrite(t *testing.T) {
 
 	dir, err := ioutil.TempDir("", "hbuf_")
@@ -24,10 +41,11 @@ func TestReadWrite(t *testing.T) {
 	log.Println(dir)
 	//defer os.RemoveAll(dir)
 
-	s := &Segment{Path: filepath.Join(dir, "segment_0"), FirstMessageId: 5}
+	s := &Segment{Path: filepath.Join(dir, "segment_0"), First: 5}
 	s.Open()
 
 	var m *message.Message
+	ts := time.Now().UTC()
 
 	tests := []struct {
 		n int
@@ -38,7 +56,9 @@ func TestReadWrite(t *testing.T) {
 		{7, "baz"},
 	}
 	for _, test := range tests {
-		m := &message.Message{Type: "text/plain", Body: []byte(test.s)}
+		//m := &message.Message{TS: ts, Type: "text/plain", Body: []byte(test.s)}
+		m := message.New("text/plain", []byte(test.s))
+		m.TS = ts
 		if err := s.Write(m); err != nil {
 			t.Fatal(err)
 		}
@@ -60,14 +80,18 @@ func TestReadWrite(t *testing.T) {
 	s = &Segment{Path: filepath.Join(dir, "segment_0")}
 	s.Open()
 	s.Close() // closing for writes
-	if s.FirstMessageId != 5 {
-		t.Fatalf("expected 5, got %d", s.FirstMessageId)
+	if s.First != 5 {
+		t.Fatalf("expected 5, got %d", s.First)
 	}
 	m, err = s.Read(6)
 	if string(m.Body) != "bar" {
 		t.Errorf("barf")
 	}
-	m = &message.Message{Type: "text/plain", Body: []byte("baz")}
+	if m.TS != ts {
+		t.Errorf("timestamps don't match: %v %v", ts, m.TS)
+	}
+	//m = &message.Message{Type: "text/plain", Body: []byte("baz")}
+	m = message.New("text/plain", []byte("baz"))
 	err = s.Write(m)
 	if err != ErrorSegmentClosed {
 		t.Fatal("expected error")
@@ -76,7 +100,8 @@ func TestReadWrite(t *testing.T) {
 
 	s = &Segment{Path: filepath.Join(dir, "segment_0")}
 	s.Open()
-	m = &message.Message{Type: "text/plain", Body: []byte("monkey")}
+	//m = &message.Message{Type: "text/plain", Body: []byte("monkey")}
+	m = message.New("text/plain", []byte("monkey"))
 	err = s.Write(m)
 	if err != nil {
 		t.Fatal(err)
@@ -89,6 +114,10 @@ func TestReadWrite(t *testing.T) {
 }
 
 func TestRWParallel(t *testing.T) {
+
+	if testing.Short() {
+		t.Skip("skipping test in short mode.")
+	}
 
 	dir, err := ioutil.TempDir("", "hbuf_")
 	if err != nil {
@@ -103,7 +132,8 @@ func TestRWParallel(t *testing.T) {
 	N := 1 << 10
 
 	for i := 0; i < N; i++ {
-		m := &message.Message{Type: "text/plain", Body: []byte(fmt.Sprintf("%d", i))}
+		//m := &message.Message{Type: "text/plain", Body: []byte(fmt.Sprintf("%d", i))}
+		m := message.New("text/plain", []byte(fmt.Sprintf("%d", i)))
 		if err := s.Write(m); err != nil {
 			t.Fatal(err)
 		}
@@ -122,7 +152,8 @@ func TestRWParallel(t *testing.T) {
 					return
 				default:
 				}
-				m := &message.Message{Type: "text/plain", Body: []byte(fmt.Sprintf("%d", i))}
+				//m := &message.Message{Type: "text/plain", Body: []byte(fmt.Sprintf("%d", i))}
+				m := message.New("text/plain", []byte(fmt.Sprintf("%d", i)))
 				if err := s.Write(m); err != nil {
 					t.Error(err)
 					return
@@ -173,7 +204,8 @@ func BenchmarkWrite(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		body := bytes.Repeat([]byte("x"), rand.Intn(1<<10))
-		m := &message.Message{ID: s.MessageCount, Type: "text/plain", Body: body}
+		//m := &message.Message{TS: time.Now(), Type: "text/plain", Body: body}
+		m := message.New("text/plain", body)
 		err := s.Write(m)
 		if err != nil {
 			b.Fatal(err)
@@ -181,7 +213,7 @@ func BenchmarkWrite(b *testing.B) {
 	}
 }
 
-func BenchmarkRead(b *testing.B) {
+func BenchmarkRandomRead(b *testing.B) {
 
 	dir, err := ioutil.TempDir("", "hbuf")
 	if err != nil {
@@ -197,7 +229,8 @@ func BenchmarkRead(b *testing.B) {
 	N := 10000
 	for i := 0; i < N; i++ {
 		body := bytes.Repeat([]byte("x"), rand.Intn(1<<10))
-		m := &message.Message{Type: "text/plain", Body: body}
+		//m := &message.Message{Type: "text/plain", Body: body}
+		m := message.New("text/plain", body)
 		s.Write(m)
 	}
 

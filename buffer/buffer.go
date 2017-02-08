@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 
-	"github.com/mkocikowski/hbuf/log"
 	"github.com/mkocikowski/hbuf/message"
 	"github.com/mkocikowski/hbuf/segment"
 	"github.com/mkocikowski/hbuf/stats"
@@ -111,7 +111,7 @@ func (b *Buffer) openSegments() error {
 			return fmt.Errorf("error opening segment: %v", err)
 		}
 		b.segments = append(b.segments, s)
-		b.Len += s.MessageCount
+		b.Len += s.Count
 	}
 	// TODO: close all but the last segment for writing?
 	// TODO: trip segments?
@@ -177,7 +177,7 @@ func (b *Buffer) SetReplicas(replicas []string) {
 		b.lock.Lock()
 		b.replicas[r] = n
 		b.lock.Unlock()
-		log.DEBUG.Printf("set replica %q for buffer %q", n.ID, b.ID)
+		log.Printf("set replica %q for buffer %q", n.ID, b.ID)
 	}
 }
 
@@ -187,7 +187,7 @@ func (b *Buffer) loadReplicas() error {
 	d, err := ioutil.ReadFile(f)
 	switch {
 	case os.IsNotExist(err):
-		log.DEBUG.Printf("no replicas on disk for buffer %q", b.ID)
+		log.Printf("no replicas on disk for buffer %q", b.ID)
 		return nil
 	case err != nil:
 		return fmt.Errorf("error reading buffer replicas: %v", err)
@@ -222,12 +222,12 @@ func (b *Buffer) Stop() {
 		s.Close()
 	}
 	if err := b.saveReplicas(); err != nil {
-		log.WARN.Println(err)
+		log.Println(err)
 	}
 	if err := b.saveConsumers(); err != nil {
-		log.WARN.Println(err)
+		log.Println(err)
 	}
-	log.DEBUG.Printf("buffer %q stopped", b.ID)
+	log.Printf("buffer %q stopped", b.ID)
 }
 
 func (b *Buffer) Delete() error {
@@ -244,7 +244,7 @@ func (b *Buffer) trimSegments() error {
 		s, b.segments = b.segments[0], b.segments[1:]
 		s.Close()
 		if err := os.Remove(s.Path); err != nil {
-			log.DEBUG.Printf("error removing segment file: %v", err)
+			log.Printf("error removing segment file: %v", err)
 		}
 	}
 	return nil
@@ -256,7 +256,7 @@ func (b *Buffer) addSegment() error {
 		b.segments[len(b.segments)-1].Close()
 	}
 	f := filepath.Join(b.Path, fmt.Sprintf("segment_%08x", b.Len))
-	s := &segment.Segment{Path: f, FirstMessageId: b.Len}
+	s := &segment.Segment{Path: f, First: b.Len}
 	err := s.Open()
 	if err != nil {
 		return fmt.Errorf("error creating segment: %v", err)
@@ -273,7 +273,7 @@ func (b *Buffer) getSegment() (*segment.Segment, error) {
 		}
 	}
 	s := b.segments[len(b.segments)-1]
-	if s.MessageCount >= b.SegmentMaxMessages {
+	if s.Count >= b.SegmentMaxMessages {
 		if err := b.addSegment(); err != nil {
 			return nil, err
 		}
@@ -310,22 +310,27 @@ func (b *Buffer) write(m *message.Message) error {
 	b.lock.Unlock()
 	// TODO: write to replicas
 	for _, r := range replicas {
-		n := &message.Message{m.ID, m.Type, m.Body, make(chan error, 1)}
+		n := &message.Message{
+			TS:    m.TS,
+			Type:  m.Type,
+			Body:  m.Body,
+			Error: make(chan error, 1),
+		}
 		r.data <- n
 		err := <-n.Error
 		if err != nil {
-			log.WARN.Println(err)
+			log.Println(err)
 		}
 	}
 	return nil
 }
 
 func (b *Buffer) writer() {
-	log.DEBUG.Printf("started writer for buffer %q", b.ID)
+	log.Printf("started writer for buffer %q", b.ID)
 	for m := range b.data {
 		err := b.write(m)
 		if err != nil {
-			log.ERROR.Println(err)
+			log.Println(err)
 			m.Error <- err
 		}
 		close(m.Error)
@@ -353,7 +358,7 @@ func (b *Buffer) read(id int) (*message.Message, error) {
 	var i int
 	for j, s := range b.segments {
 		// TODO: what if the segment containing the message has been deleted?
-		if s.FirstMessageId > id {
+		if s.First > id {
 			break
 		}
 		i = j

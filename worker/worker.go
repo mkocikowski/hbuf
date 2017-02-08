@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,7 +17,6 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/mkocikowski/hbuf/buffer"
 	"github.com/mkocikowski/hbuf/controller"
-	"github.com/mkocikowski/hbuf/log"
 	"github.com/mkocikowski/hbuf/message"
 	"github.com/mkocikowski/hbuf/router"
 	"github.com/mkocikowski/hbuf/segment"
@@ -79,7 +79,7 @@ func (w *Worker) loadBuffers() error {
 	//
 	files, err := ioutil.ReadDir(filepath.Join(w.Path, "buffers"))
 	if err != nil && !os.IsNotExist(err) {
-		log.WARN.Printf("can't access worker's data directory: %v", err)
+		log.Printf("can't access worker's data directory: %v", err)
 		return nil
 	}
 	for _, f := range files {
@@ -92,12 +92,12 @@ func (w *Worker) loadBuffers() error {
 			Path:       filepath.Join(w.Path, "buffers", uid),
 		}
 		if err := b.Init(); err != nil {
-			log.WARN.Printf("error initializing buffer from disk: %v", err)
+			log.Printf("error initializing buffer from disk: %v", err)
 			continue
 		}
 		w.buffers[b.ID] = b
 		//j, _ := json.Marshal(b)
-		log.DEBUG.Printf("loaded buffer: %v", b.Path)
+		log.Printf("loaded buffer: %v", b.Path)
 	}
 	return nil
 }
@@ -148,14 +148,14 @@ func (w *Worker) Stop() {
 	for _, b := range w.buffers {
 		b.Stop()
 	}
-	log.DEBUG.Printf("worker %q stopped", w.ID)
+	log.Printf("worker %q stopped", w.ID)
 }
 
 func (w *Worker) handleGetInfo(req *http.Request) *router.Response {
 	w.lock.Lock()
 	defer w.lock.Unlock()
 	j, _ := json.Marshal(w)
-	log.DEBUG.Println(req.Proto)
+	log.Println(req.Proto)
 	return &router.Response{Body: j}
 }
 
@@ -176,7 +176,7 @@ func (w *Worker) handleCreateBuffer(req *http.Request) *router.Response {
 	w.buffers[b.ID] = b
 	w.lock.Unlock()
 	j, _ := json.Marshal(b)
-	log.DEBUG.Printf("created buffer %q", b.ID)
+	log.Printf("created buffer %q", b.ID)
 	return &router.Response{Body: j, StatusCode: http.StatusCreated}
 }
 
@@ -205,7 +205,7 @@ func (w *Worker) handleSetReplicas(req *http.Request) *router.Response {
 	}
 	body, err := ioutil.ReadAll(req.Body)
 	if err != nil {
-		log.WARN.Printf("error reading set replica body: %v", err)
+		log.Printf("error reading set replica body: %v", err)
 		return &router.Response{Error: fmt.Errorf("error reading set replica body: %v", err)}
 	}
 	var replicas []string
@@ -213,7 +213,7 @@ func (w *Worker) handleSetReplicas(req *http.Request) *router.Response {
 		return &router.Response{Error: fmt.Errorf("error parsing set replica body: %v", err)}
 	}
 	b.SetReplicas(replicas)
-	log.DEBUG.Printf("set replicas %q for buffer %q", replicas, b.ID)
+	log.Printf("set replicas %q for buffer %q", replicas, b.ID)
 	// TODO: should this call the replicas to see what's up?
 	return &router.Response{StatusCode: http.StatusOK}
 }
@@ -243,27 +243,23 @@ func (w *Worker) handleGetBuffer(req *http.Request) *router.Response {
 }
 
 func (w *Worker) handleWriteToBuffer(req *http.Request) *router.Response {
+	//
 	w.lock.Lock()
 	b, ok := w.buffers[mux.Vars(req)["buffer"]]
 	w.lock.Unlock()
 	if !ok {
-		log.DEBUG.Println("couldn't find buffer:", mux.Vars(req)["buffer"])
 		return &router.Response{StatusCode: http.StatusNotFound}
 	}
 	//dump, _ := httputil.DumpRequest(req, true)
 	//log.Println(string(dump))
 	body, err := ioutil.ReadAll(req.Body)
 	if err != nil {
-		log.DEBUG.Println(err)
 		return &router.Response{Error: fmt.Errorf("error reading message body: %v", err)}
 	}
-	m := &message.Message{
-		Type: req.Header.Get("Content-Type"),
-		Body: body,
-	}
+	m := message.New(req.Header.Get("Content-Type"), body)
 	if err := b.Write(m); err != nil {
 		// theoretically the buffer may have been destroyed in the mean time
-		log.DEBUG.Println("error writing message body to disk: %v", err)
+		log.Println("error writing message body to disk: %v", err)
 		return &router.Response{Error: fmt.Errorf("error writing message body: %v", err)}
 	}
 	return &router.Response{StatusCode: http.StatusOK}
@@ -310,7 +306,7 @@ func (w *Worker) handleConsumeFromBuffer(req *http.Request) *router.Response {
 		return &router.Response{StatusCode: http.StatusNoContent}
 	}
 	if err != nil {
-		log.DEBUG.Printf("error consuming from buffer %q, consumer id %q: %v", buffer, consumer, err)
+		log.Printf("error consuming from buffer %q, consumer id %q: %v", buffer, consumer, err)
 		return &router.Response{Error: fmt.Errorf("error consuming from buffer: %v", err)}
 	}
 	return &router.Response{Body: m.Body, ContentType: m.Type}

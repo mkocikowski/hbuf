@@ -2,13 +2,13 @@ package tenant
 
 import (
 	"fmt"
+	"log"
 	"net/url"
 	"path/filepath"
 
 	"github.com/gorilla/mux"
 	"github.com/mkocikowski/hbuf/client"
 	"github.com/mkocikowski/hbuf/controller"
-	"github.com/mkocikowski/hbuf/log"
 	"github.com/mkocikowski/hbuf/router"
 	"github.com/mkocikowski/hbuf/util"
 	"github.com/mkocikowski/hbuf/worker"
@@ -41,7 +41,7 @@ func (t *Tenant) Init(r *mux.Router, cURL string) error {
 	u, _ = url.Parse(m.URL)
 	router.RegisterRoutes(r, u.Path, m.Routes())
 	t.Manager = m
-	log.DEBUG.Printf("registered manager %q for tenant %q", m.ID, t.ID)
+	log.Printf("registered manager %q for tenant %q", m.ID, t.ID)
 	cURL = m.URL
 	//
 	id = util.Uid()
@@ -59,7 +59,7 @@ func (t *Tenant) Init(r *mux.Router, cURL string) error {
 	u, _ = url.Parse(w.URL)
 	router.RegisterRoutes(r, u.Path, w.Routes())
 	t.Worker = w
-	log.DEBUG.Printf("registered worker %q for tenant %q", w.ID, t.ID)
+	log.Printf("registered worker %q for tenant %q", w.ID, t.ID)
 	//
 	id = util.Uid()
 	c := &client.Client{
@@ -76,14 +76,14 @@ func (t *Tenant) Init(r *mux.Router, cURL string) error {
 		router.RegisterRoutes(r, "", c.Routes())
 	}
 	t.Client = c
-	log.DEBUG.Printf("registered client %q for tenant %q", c.ID, t.ID)
+	log.Printf("registered client %q for tenant %q", c.ID, t.ID)
 	//
-	log.DEBUG.Printf("tenant %q initialized", t.ID)
+	log.Printf("tenant %q initialized", t.ID)
 	return nil
 }
 
 func (t *Tenant) Stop() {
 	t.Worker.Stop()
 	t.Manager.Stop()
-	log.DEBUG.Printf("tenant %q stopped", t.ID)
+	log.Printf("tenant %q stopped", t.ID)
 }
