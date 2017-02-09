@@ -105,8 +105,8 @@ func TestParallel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	//log.Println(dir)
-	defer os.RemoveAll(dir)
+	log.Println(dir)
+	//defer os.RemoveAll(dir)
 	node := &Node{Path: dir}
 	server := httptest.NewServer(node)
 	defer server.Close()

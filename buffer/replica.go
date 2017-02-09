@@ -3,103 +3,143 @@ package buffer
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"log"
+	"net/http"
 	"sync"
 	"time"
 
 	"github.com/mkocikowski/hbuf/curl"
-	"github.com/mkocikowski/hbuf/message"
+	"github.com/mkocikowski/hbuf/segment"
 )
 
-type Replica struct {
-	ID         string `json:"id"`
-	URL        string `json:"url"`
-	Controller string `json:"-"`
-	Len        int    `json:"len"`
-	lock       *sync.Mutex
-	wg         sync.WaitGroup
-	data       chan *message.Message
-	done       chan bool
+type replica struct {
+	ID      string `json:"id"`
+	URL     string `json:"url"`
+	manager string
+	length  int
+	buffer  *Buffer
+	lock    *sync.Mutex
+	wg      sync.WaitGroup
+	data    chan bool
+	sync    chan bool
+	done    chan bool
+	isUp    chan bool
 }
 
-func (r *Replica) Init() error {
-	//
-	r.lock = new(sync.Mutex)
-	r.data = make(chan *message.Message)
+func (r *replica) Init() error {
+
+	r.data = make(chan bool, 1)
+	r.sync = make(chan bool, 1)
 	r.done = make(chan bool)
-	// TODO: add "health check": make sure the replica is up to date, catch up if needed
-	r.wg.Add(1)
-	go r.updater()
-	r.wg.Add(1)
+	r.isUp = make(chan bool)
+	r.lock = new(sync.Mutex)
+
+	r.wg.Add(2)
+	go r.update()
 	go r.writer()
+
 	return nil
 }
 
-func (r *Replica) Stop() {
-	close(r.data)
+func (r *replica) Stop() {
 	close(r.done)
-	// TODO: use wait group to make sure all goroutines exited?
 	r.wg.Wait()
 	log.Printf("replica %q stopped", r.ID)
 }
 
-func (r *Replica) updater() {
-	//
+func (r *replica) Len() int {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+	return r.length
+}
+
+func (r *replica) update() {
+
 	defer r.wg.Done()
-	log.Printf("starting updater for replica %q", r.ID)
+	// get buffer URL from manager
 	for {
-		if err := r.update(); err != nil {
-			log.Println(err)
-		}
-		select {
-		case <-time.After(1 * time.Second):
-		case <-r.done:
-			log.Printf("stopped replica %q updater", r.ID)
-			return
-		}
-	}
-}
-
-func (r *Replica) update() error {
-	//
-	r.lock.Lock()
-	c := r.Controller
-	r.lock.Unlock()
-	b, err := curl.Get(c + "/buffers/" + r.ID)
-	if err != nil {
-		return fmt.Errorf("error getting replica URL from %q: %v", c, err)
-	}
-	u := Replica{}
-	if err := json.Unmarshal(b, &u); err != nil {
-		return fmt.Errorf("error parsing replica URL: %v", err)
-	}
-	r.lock.Lock()
-	if r.URL != u.URL {
-		r.URL = u.URL
-		log.Printf("set url for replica %q: %v", r.ID, r.URL)
-	}
-	r.lock.Unlock()
-	log.Printf("updated url for replica %q", r.ID)
-	return nil
-}
-
-func (r *Replica) writer() {
-	//
-	defer r.wg.Done()
-	log.Printf("starting writer for replica %q", r.ID)
-	// TODO: this logic needs to be changed
-	for m := range r.data {
-		r.lock.Lock()
-		url := r.URL
-		r.lock.Unlock()
-		_, err := curl.Post(url, m.Type, bytes.NewBuffer(m.Body))
+		b, err := curl.Get(r.manager + "/buffers/" + r.ID)
 		if err != nil {
-			m.Error <- err
+			log.Printf("error getting replica URL from manager %q: %v", r.manager, err)
+			time.Sleep(1 * time.Second)
 			continue
 		}
-		r.Len += 1
-		close(m.Error)
+		buffer := Buffer{}
+		if err := json.Unmarshal(b, &buffer); err != nil {
+			log.Printf("error parsing replica metadata: %v", err)
+			time.Sleep(1 * time.Second)
+			continue
+		}
+		r.URL = buffer.URL
+		break
 	}
+	// get buffer length from buffer
+	for {
+		b, err := curl.Get(r.URL)
+		if err != nil {
+			log.Printf("error getting replica length from buffer %q: %v", r.URL, err)
+			time.Sleep(1 * time.Second)
+			continue
+		}
+		buffer := Buffer{}
+		if err := json.Unmarshal(b, &buffer); err != nil {
+			log.Printf("error parsing replica metadata: %v", err)
+			time.Sleep(1 * time.Second)
+			continue
+		}
+		r.length = buffer.Len
+		log.Printf("replica %q length: %d", r.ID, r.length)
+		break
+	}
+	close(r.isUp)
+	r.data <- true
+}
+
+func (r *replica) writer() {
+
+	defer r.wg.Done()
+	<-r.isUp
+	log.Printf("starting writer for replica %q", r.ID)
+
+	for {
+		select {
+		case <-r.data:
+		case <-r.done:
+			return
+		}
+		r.lock.Lock()
+		l := r.length
+		u := r.URL
+		r.lock.Unlock()
+		for {
+			m, err := r.buffer.Read(l)
+			if err == segment.ErrorOutOfBounds {
+				break
+			}
+			if err != nil {
+				log.Println(err)
+				break
+			}
+			// TODO: read remote buffer length, compare to expected
+			req, _ := http.NewRequest("POST", u, bytes.NewBuffer(m.Body))
+			req.Header.Add("Content-Type", m.Type)
+			req.Header.Add("Hbuf-Ts", m.TS.Format(time.RFC3339Nano))
+			_, err = curl.Do(req)
+			if err != nil {
+				log.Println(err)
+				break
+			}
+			l += 1
+			r.lock.Lock()
+			r.length = l
+			r.lock.Unlock()
+			//log.Println("replicated")
+			select {
+			case r.sync <- true: // signal that length has changed
+			default:
+			}
+		}
+	}
+
 	log.Printf("stopped replica %q writer", r.ID)
 }

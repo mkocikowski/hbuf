@@ -198,6 +198,9 @@ func (s *Segment) seek(n int) error {
 func (s *Segment) Read(id int) (*message.Message, error) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
+	if id < s.First {
+		return nil, ErrorOutOfBounds
+	}
 	n := id - s.First
 	if n >= s.Count {
 		return nil, ErrorOutOfBounds

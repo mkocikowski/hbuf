@@ -239,6 +239,7 @@ func (w *Worker) handleGetBuffer(req *http.Request) *router.Response {
 		}
 	}
 	j, _ := json.Marshal(b)
+	//log.Println(string(j))
 	return &router.Response{Body: j}
 }
 
@@ -257,9 +258,16 @@ func (w *Worker) handleWriteToBuffer(req *http.Request) *router.Response {
 		return &router.Response{Error: fmt.Errorf("error reading message body: %v", err)}
 	}
 	m := message.New(req.Header.Get("Content-Type"), body)
+	if ts := req.Header.Get("Hbuf-Ts"); ts != "" {
+		t, err := time.Parse(time.RFC3339Nano, ts)
+		if err == nil {
+			m.TS = t
+			//log.Println("setting TS:", ts)
+		}
+	}
 	if err := b.Write(m); err != nil {
 		// theoretically the buffer may have been destroyed in the mean time
-		log.Println("error writing message body to disk: %v", err)
+		log.Printf("error writing message body to disk: %v", err)
 		return &router.Response{Error: fmt.Errorf("error writing message body: %v", err)}
 	}
 	return &router.Response{StatusCode: http.StatusOK}

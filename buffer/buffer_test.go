@@ -38,7 +38,7 @@ func TestBuffer(t *testing.T) {
 		t.Errorf("expected error, didn't get it")
 	}
 
-	m := &message.Message{Type: "text/plain", Body: []byte("foo")}
+	m := message.New("text/plain", []byte("foo"))
 	if err := b.Write(m); err != nil {
 		t.Fatal(err)
 	}
@@ -83,9 +83,8 @@ func TestBuffer(t *testing.T) {
 	if x.ID != 0 {
 		t.Fatalf("expected message id==0, got: %v", x.ID)
 	}
-	m = &message.Message{Type: "text/plain", Body: []byte("monkey")}
-	err = b.Write(m)
-	if err != nil {
+	m = message.New("text/plain", []byte("monkey"))
+	if err := b.Write(m); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if m.ID != 1 {
@@ -113,7 +112,7 @@ func TestRotateSegments(t *testing.T) {
 	b.BufferMaxSegments = 2
 
 	for i := 0; i < 5; i++ {
-		m := &message.Message{Type: "text/plain", Body: []byte(fmt.Sprintf("foo-%d", i))}
+		m := message.New("text/plain", []byte(fmt.Sprintf("foo-%d", i)))
 		err = b.Write(m)
 	}
 	_, err = b.Read(0)
@@ -148,6 +147,7 @@ func TestRotateSegments(t *testing.T) {
 }
 
 func BenchmarkSaveConsumers(b *testing.B) {
+
 	dir, err := ioutil.TempDir("", "hbuf")
 	if err != nil {
 		log.Fatal(err)
@@ -188,8 +188,10 @@ func BenchmarkConsume(b *testing.B) {
 	N := 10000
 	for i := 0; i < N; i++ {
 		body := bytes.Repeat([]byte("x"), rand.Intn(1<<10))
-		m := &message.Message{Type: "text/plain", Body: body}
-		buffer.Write(m)
+		m := message.New("text/plain", body)
+		if err := buffer.Write(m); err != nil {
+			log.Println(err)
+		}
 	}
 
 	b.ResetTimer()

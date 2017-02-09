@@ -3,7 +3,6 @@ package buffer
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"os"
@@ -56,9 +55,8 @@ type Buffer struct {
 	Controller string `json:"-"`
 	Path       string `json:"dir"`
 	Len        int    `json:"len"`
-	mURL       string
 	running    bool
-	replicas   map[string]*Replica
+	replicas   map[string]*replica
 	consumers  map[string]*Consumer
 	segments   []*segment.Segment
 	lock       *sync.Mutex
@@ -166,13 +164,13 @@ func (b *Buffer) Replicas() []string {
 func (b *Buffer) SetReplicas(replicas []string) {
 	//
 	if b.replicas == nil {
-		b.replicas = make(map[string]*Replica)
+		b.replicas = make(map[string]*replica)
 	}
 	for _, r := range replicas {
 		if _, ok := b.replicas[r]; ok {
 			continue
 		}
-		n := &Replica{ID: r, Controller: b.Controller}
+		n := &replica{ID: r, manager: b.Controller, buffer: b}
 		n.Init()
 		b.lock.Lock()
 		b.replicas[r] = n
@@ -216,8 +214,11 @@ func (b *Buffer) Stop() {
 	b.lock.Lock()
 	b.running = false
 	close(b.done)
-	close(b.data)
+	close(b.data) // buffer writer will close replicas when done
 	b.lock.Unlock()
+	//	for _, r := range b.replicas {
+	//		r.Stop()
+	//	}
 	for _, s := range b.segments {
 		s.Close()
 	}
@@ -295,6 +296,7 @@ func (b *Buffer) write(m *message.Message) error {
 	//
 	var err error
 	b.lock.Lock()
+	defer b.lock.Unlock()
 	s, err := b.getSegment()
 	if err != nil {
 		return err
@@ -303,23 +305,11 @@ func (b *Buffer) write(m *message.Message) error {
 		return err
 	}
 	b.Len += 1
-	replicas := make([]*Replica, 0, len(b.replicas))
+	// this signals to replicas that there is data to be syncd
 	for _, r := range b.replicas {
-		replicas = append(replicas, r)
-	}
-	b.lock.Unlock()
-	// TODO: write to replicas
-	for _, r := range replicas {
-		n := &message.Message{
-			TS:    m.TS,
-			Type:  m.Type,
-			Body:  m.Body,
-			Error: make(chan error, 1),
-		}
-		r.data <- n
-		err := <-n.Error
-		if err != nil {
-			log.Println(err)
+		select {
+		case r.data <- true:
+		default:
 		}
 	}
 	return nil
@@ -341,10 +331,12 @@ func (b *Buffer) writer() {
 }
 
 func (b *Buffer) Write(m *message.Message) error {
-	if !b.running {
+	b.lock.Lock()
+	running := b.running
+	b.lock.Unlock()
+	if !running {
 		return fmt.Errorf("buffer closed")
 	}
-	m.Error = make(chan error)
 	b.data <- m
 	return <-m.Error
 }
@@ -353,7 +345,7 @@ func (b *Buffer) Write(m *message.Message) error {
 
 func (b *Buffer) read(id int) (*message.Message, error) {
 	if len(b.segments) == 0 {
-		return nil, io.EOF
+		return nil, segment.ErrorOutOfBounds
 	}
 	var i int
 	for j, s := range b.segments {
@@ -363,7 +355,7 @@ func (b *Buffer) read(id int) (*message.Message, error) {
 		}
 		i = j
 	}
-	// returns segment.ErrorOutOfBounds
+	// can return segment.ErrorOutOfBounds
 	return b.segments[i].Read(id)
 }
 
