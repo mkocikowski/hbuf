@@ -60,8 +60,6 @@ type Buffer struct {
 	consumers  map[string]*Consumer
 	segments   []*segment.Segment
 	lock       *sync.Mutex
-	data       chan *message.Message
-	done       chan bool
 }
 
 func (b *Buffer) Init() error {
@@ -84,9 +82,6 @@ func (b *Buffer) Init() error {
 		return fmt.Errorf("error loading replicas: %v", err)
 	}
 	b.running = true
-	b.data = make(chan *message.Message)
-	b.done = make(chan bool)
-	go b.writer()
 	return nil
 }
 
@@ -106,10 +101,11 @@ func (b *Buffer) openSegments() error {
 		s := &segment.Segment{Path: filepath.Join(b.Path, f)}
 		err := s.Open()
 		if err != nil {
-			return fmt.Errorf("error opening segment: %v", err)
+			return fmt.Errorf("error opening segment %q: %v", s.Path, err)
 		}
 		b.segments = append(b.segments, s)
-		b.Len += s.Count
+		//b.Len += s.Count
+		b.Len = s.First + s.Len()
 	}
 	// TODO: close all but the last segment for writing?
 	// TODO: trip segments?
@@ -213,22 +209,20 @@ func (b *Buffer) Stop() {
 	//
 	b.lock.Lock()
 	b.running = false
-	close(b.done)
-	close(b.data) // buffer writer will close replicas when done
-	b.lock.Unlock()
-	//	for _, r := range b.replicas {
-	//		r.Stop()
-	//	}
+	for _, r := range b.replicas {
+		r.Stop()
+	}
 	for _, s := range b.segments {
 		s.Close()
 	}
+	b.lock.Unlock()
 	if err := b.saveReplicas(); err != nil {
 		log.Println(err)
 	}
 	if err := b.saveConsumers(); err != nil {
 		log.Println(err)
 	}
-	log.Printf("buffer %q stopped", b.ID)
+	log.Printf("buffer %q stopped; replicas: %v", b.ID, b.Replicas())
 }
 
 func (b *Buffer) Delete() error {
@@ -274,13 +268,13 @@ func (b *Buffer) getSegment() (*segment.Segment, error) {
 		}
 	}
 	s := b.segments[len(b.segments)-1]
-	if s.Count >= b.SegmentMaxMessages {
+	if s.Len() >= b.SegmentMaxMessages {
 		if err := b.addSegment(); err != nil {
 			return nil, err
 		}
 		s = b.segments[len(b.segments)-1]
 	}
-	if s.SizeB >= b.SegmentMaxBytes {
+	if s.SizeB() >= b.SegmentMaxBytes {
 		if err := b.addSegment(); err != nil {
 			return nil, err
 		}
@@ -315,20 +309,20 @@ func (b *Buffer) write(m *message.Message) error {
 	return nil
 }
 
-func (b *Buffer) writer() {
-	log.Printf("started writer for buffer %q", b.ID)
-	for m := range b.data {
-		err := b.write(m)
-		if err != nil {
-			log.Println(err)
-			m.Error <- err
-		}
-		close(m.Error)
-	}
-	for _, r := range b.replicas {
-		r.Stop()
-	}
-}
+//func (b *Buffer) writer() {
+//	log.Printf("started writer for buffer %q", b.ID)
+//	for m := range b.data {
+//		err := b.write(m)
+//		if err != nil {
+//			log.Println(err)
+//			m.Error <- err
+//		}
+//		close(m.Error)
+//	}
+//	for _, r := range b.replicas {
+//		r.Stop()
+//	}
+//}
 
 func (b *Buffer) Write(m *message.Message) error {
 	b.lock.Lock()
@@ -337,8 +331,8 @@ func (b *Buffer) Write(m *message.Message) error {
 	if !running {
 		return fmt.Errorf("buffer closed")
 	}
-	b.data <- m
-	return <-m.Error
+	err := b.write(m)
+	return err
 }
 
 // ---------------------------------------------------------------------

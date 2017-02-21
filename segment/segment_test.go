@@ -100,7 +100,6 @@ func TestReadWrite(t *testing.T) {
 
 	s = &Segment{Path: filepath.Join(dir, "segment_0")}
 	s.Open()
-	//m = &message.Message{Type: "text/plain", Body: []byte("monkey")}
 	m = message.New("text/plain", []byte("monkey"))
 	err = s.Write(m)
 	if err != nil {
@@ -108,6 +107,35 @@ func TestReadWrite(t *testing.T) {
 	}
 	if m.ID != 8 {
 		t.Fatalf("unexpected sequence number: %v", m.ID)
+	}
+	if s.Len() != 4 {
+		t.Fatalf("expected length 4, got: %d", s.Len())
+	}
+
+	m, err = s.Last()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m.ID != 8 {
+		t.Fatalf("unexpected sequence number: %v", m.ID)
+	}
+
+	m, err = s.Read(8)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m.ID != 8 {
+		t.Fatalf("unexpected sequence number: %v", m.ID)
+	}
+
+	m, err = s.Read(9)
+	if err != ErrorOutOfBounds {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	err = s.verify()
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	s.Close()
@@ -238,6 +266,38 @@ func BenchmarkRandomRead(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		_, err := s.Read(rand.Intn(N))
+		if err != nil {
+			b.Fatalf("unexpected error: %v", err)
+		}
+	}
+
+}
+
+func BenchmarkSequentialRead(b *testing.B) {
+
+	dir, err := ioutil.TempDir("", "hbuf")
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Println(dir)
+	defer os.RemoveAll(dir)
+
+	s := &Segment{Path: filepath.Join(dir, "segment_0")}
+	s.Open()
+	defer s.Close()
+
+	N := 10000
+	for i := 0; i < N; i++ {
+		body := bytes.Repeat([]byte("x"), rand.Intn(1<<10))
+		//m := &message.Message{Type: "text/plain", Body: body}
+		m := message.New("text/plain", body)
+		s.Write(m)
+	}
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		_, err := s.Read(i % N)
 		if err != nil {
 			b.Fatalf("unexpected error: %v", err)
 		}

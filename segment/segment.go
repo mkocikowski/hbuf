@@ -2,6 +2,7 @@ package segment
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -25,25 +26,26 @@ type Config struct {
 }
 
 type Segment struct {
-	Path    string `json:"path"`
-	First   int    `json:"first"`
-	Count   int    `json:"count"`
-	SizeB   int64  `json:"size_b"`
-	writer  *os.File
-	reader  *os.File
-	lock    *sync.Mutex
-	offsets map[int]int64
-	lru     []int
+	Path      string
+	First     int
+	len       int
+	lenLock   *sync.Mutex
+	sizeB     int64
+	sizeBLock *sync.Mutex
+	writer    *os.File
+	reader    *os.File
+	lock      *sync.Mutex
+	offsets   map[int]int64
+	lru       []int
+	sha       []byte
+	shaLock   *sync.Mutex
 }
-
-type Asc []*Segment
-
-func (s Asc) Len() int           { return len(s) }
-func (s Asc) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
-func (s Asc) Less(i, j int) bool { return s[i].First < s[j].First }
 
 func (s *Segment) Open() error {
 	//
+	s.lenLock = new(sync.Mutex)
+	s.sizeBLock = new(sync.Mutex)
+	s.shaLock = new(sync.Mutex)
 	s.lock = new(sync.Mutex)
 	s.offsets = make(map[int]int64)
 	s.lru = make([]int, 0, DEFAULT_OFFSET_CACHE_SIZE)
@@ -69,8 +71,22 @@ func (s *Segment) Open() error {
 		return fmt.Errorf("error reading id of first segment message: %v", err)
 	}
 	s.First = m.ID
-	s.Count = s.count() // loops through all messages
-	s.SizeB, _ = s.reader.Seek(0, 2)
+	// loop throught all messages, count them
+	s.len, err = s.count()
+	if err != nil {
+		return fmt.Errorf("error counting segment messages: %v", err)
+	}
+	// validate the chain of message SHAs (verify segment integrity)
+	if err := s.verify(); err != nil {
+		return fmt.Errorf("error verifying segment integrity: %v", err)
+	}
+	//
+	s.sizeB, _ = s.reader.Seek(0, 2)
+	// set segment's sha to the sha of the last message
+	m, err = s.Last()
+	if err == nil {
+		s.sha = m.Sha
+	}
 	j, _ := json.Marshal(s)
 	log.Println(string(j))
 	return nil
@@ -81,25 +97,76 @@ func (s *Segment) Close() {
 	s.writer = nil
 }
 
-func (s *Segment) count() int {
+func (s *Segment) Len() int {
+	s.lenLock.Lock()
+	defer s.lenLock.Unlock()
+	return s.len
+}
+
+func (s *Segment) SizeB() int64 {
+	s.sizeBLock.Lock()
+	defer s.sizeBLock.Unlock()
+	return s.sizeB
+}
+
+func (s *Segment) count() (int, error) {
 	s.reader.Seek(0, 0)
 	var err error
-	var i int
-	for i = 0; ; i++ {
-		if err = s.next(); err != nil {
-			break
+	for i := 0; ; i++ {
+		err = s.next()
+		if err == io.EOF {
+			return i, nil
+		}
+		if err != nil {
+			return i, err
 		}
 	}
-	return i
+}
+
+func (s *Segment) verify() error {
+	s.reader.Seek(0, 0)
+	m, err := s.read()
+	if err == io.EOF {
+		return nil
+	}
+	if m.ID == 0 {
+		h := sha256.New()
+		h.Write(marshal(m))
+		if !bytes.Equal(h.Sum(nil), m.Sha) {
+			return fmt.Errorf("invalid hash of first message")
+		}
+	}
+	for i := 1; ; i++ {
+		h := sha256.New()
+		h.Write(m.Sha)
+		m, err = s.read()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("error reading message: %v", err)
+		}
+		// this is inefficient, deserializing the message first, then serializing it again
+		// but for now this is quick and dirty code, trying to get basic verification working
+		h.Write(marshal(m))
+		if !bytes.Equal(h.Sum(nil), m.Sha) {
+			return fmt.Errorf("running hash %x doesn't match message hash %x", h.Sum(nil), m.Sha)
+		}
+		//log.Printf("%d: %x", i, h.Sum(nil))
+	}
 }
 
 func (s *Segment) next() error {
 	var len int64
 	_, err := fmt.Fscanf(s.reader, "%08x", &len)
+	if err == io.EOF {
+		return err
+	}
 	if err != nil {
 		return fmt.Errorf("error parsing message size: %v", err)
 	}
-	_, err = s.reader.Seek(len, 1)
+	// the +66 accounts for :sha256:
+	_, err = s.reader.Seek(len+66, 1)
 	if err != nil {
 		return fmt.Errorf("error seeking end of message: %v", err)
 	}
@@ -125,7 +192,8 @@ func unmarshal(b []byte) (*message.Message, error) {
 func (s *Segment) read() (*message.Message, error) {
 	//
 	var len int64
-	_, err := fmt.Fscanf(s.reader, "%08x", &len)
+	var sha []byte
+	_, err := fmt.Fscanf(s.reader, "%08x:%64x:", &len, &sha)
 	if err == io.EOF {
 		return nil, err
 	}
@@ -137,32 +205,12 @@ func (s *Segment) read() (*message.Message, error) {
 		return nil, err
 	}
 	m, err := unmarshal(b)
-	return m, err
+	if err != nil {
+		return nil, err
+	}
+	m.Sha = sha
+	return m, nil
 }
-
-//func (s *Segment) read() (*message.Message, error) {
-//	startOffset, _ := s.reader.Seek(0, 1)
-//	var recordLen, id, ts int64
-//	var typ string
-//	if _, err := fmt.Fscanf(s.reader, "%08x %d %d %q\n", &recordLen, &id, &ts, &typ); err != nil {
-//		return nil, err
-//	}
-//	currentOffset, _ := s.reader.Seek(0, 1)
-//	headLen := currentOffset - startOffset
-//	bodyLen := recordLen - (headLen - 8) // first 8 bytes is the record byte size
-//	m := &message.Message{
-//		ID:   int(id),
-//		TS:   time.Unix(0, ts),
-//		Type: typ,
-//		Body: make([]byte, bodyLen),
-//	}
-//	if _, err := s.reader.Read(m.Body); err != nil {
-//		return nil, err
-//	}
-//	// TODO: check for empty message body?
-//	m.Body = m.Body[:len(m.Body)-1] // remove trailing newline
-//	return m, nil
-//}
 
 func (s *Segment) seek(n int) error {
 	if n < 0 {
@@ -195,6 +243,20 @@ func (s *Segment) seek(n int) error {
 	return nil
 }
 
+func (s *Segment) Last() (*message.Message, error) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	n := s.Len() - 1
+	if err := s.seek(n); err != nil {
+		return nil, err
+	}
+	m, err := s.read()
+	if err != nil {
+		return nil, fmt.Errorf("error reading message from segment: %v", err)
+	}
+	return m, nil
+}
+
 func (s *Segment) Read(id int) (*message.Message, error) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
@@ -202,7 +264,7 @@ func (s *Segment) Read(id int) (*message.Message, error) {
 		return nil, ErrorOutOfBounds
 	}
 	n := id - s.First
-	if n >= s.Count {
+	if n >= s.Len() {
 		return nil, ErrorOutOfBounds
 	}
 	if err := s.seek(n); err != nil {
@@ -228,31 +290,30 @@ func marshal(m *message.Message) []byte {
 
 func (s *Segment) write(m *message.Message) error {
 	b := marshal(m)
-	head := fmt.Sprintf("%08x", int32(len(b)))
+	// sha of the message is the current segment sha + sha of the serialized message
+	h := sha256.New()
+	s.shaLock.Lock()
+	h.Write(s.sha)
+	s.shaLock.Unlock()
+	h.Write(b)
+	m.Sha = h.Sum(nil)
+	//
+	head := fmt.Sprintf("%08x:%64x:", int32(len(b)), m.Sha)
 	if _, err := s.writer.WriteString(head); err != nil {
 		return err
 	}
 	if _, err := s.writer.Write(b); err != nil {
 		return err
 	}
-	s.SizeB += int64(len(head) + len(b))
+	s.sizeBLock.Lock()
+	s.sizeB += int64(len(head) + len(b))
+	s.sizeBLock.Unlock()
+	s.shaLock.Lock()
+	s.sha = m.Sha
+	s.shaLock.Unlock()
 	// skipping Sync() improves performance by order of magnitude
 	return s.writer.Sync()
 }
-
-//func (s *Segment) write(m *message.Message) error {
-//	meta := fmt.Sprintf(" %d %d %q\n", m.ID, m.TS.UnixNano(), m.Type)
-//	head := fmt.Sprintf("%08x", int32(len(meta)+len(m.Body)+1))
-//	_, err := s.writer.WriteString(head + meta)
-//	if err != nil {
-//		return err
-//	}
-//	s.writer.Write(m.Body)
-//	s.writer.Write([]byte{'\n'})
-//	s.SizeB += int64(len(head) + len(meta) + len(m.Body) + 1)
-//	// skipping Sync() improves performance by order of magnitude
-//	return s.writer.Sync()
-//}
 
 func (s *Segment) Write(m *message.Message) error {
 	s.lock.Lock()
@@ -260,10 +321,12 @@ func (s *Segment) Write(m *message.Message) error {
 	if s.writer == nil {
 		return ErrorSegmentClosed
 	}
-	m.ID = s.First + s.Count
+	m.ID = s.First + s.Len()
 	if err := s.write(m); err != nil {
 		return fmt.Errorf("error writing message to segment: %s", err)
 	}
-	s.Count += 1
+	s.lenLock.Lock()
+	s.len += 1
+	s.lenLock.Unlock()
 	return nil
 }

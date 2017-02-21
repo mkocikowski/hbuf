@@ -53,7 +53,8 @@ func TestNode(t *testing.T) {
 
 	node.Stop()
 	server.Close()
-	// make sure the server loads saved data
+
+	log.Println("make sure the server loads saved data")
 	node = &Node{Path: dir}
 	server = httptest.NewServer(node)
 	defer server.Close()

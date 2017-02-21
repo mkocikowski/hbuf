@@ -43,7 +43,7 @@ func (r *replica) Init() error {
 
 func (r *replica) Stop() {
 	close(r.done)
-	r.wg.Wait()
+	//r.wg.Wait()
 	log.Printf("replica %q stopped", r.ID)
 }
 
@@ -58,9 +58,15 @@ func (r *replica) update() {
 	defer r.wg.Done()
 	// get buffer URL from manager
 	for {
-		b, err := curl.Get(r.manager + "/buffers/" + r.ID)
+		select {
+		case <-r.done:
+			return
+		default:
+		}
+		u := r.manager + "/buffers/" + r.ID
+		b, err := curl.Get(u)
 		if err != nil {
-			log.Printf("error getting replica URL from manager %q: %v", r.manager, err)
+			log.Printf("error getting replica URL from manager %q: %v", u, err)
 			time.Sleep(1 * time.Second)
 			continue
 		}
@@ -73,8 +79,13 @@ func (r *replica) update() {
 		r.URL = buffer.URL
 		break
 	}
-	// get buffer length from buffer
+	// get length of the remote buffer (where the replica data is written to)
 	for {
+		select {
+		case <-r.done:
+			return
+		default:
+		}
 		b, err := curl.Get(r.URL)
 		if err != nil {
 			log.Printf("error getting replica length from buffer %q: %v", r.URL, err)
@@ -92,7 +103,7 @@ func (r *replica) update() {
 		break
 	}
 	close(r.isUp)
-	r.data <- true
+	r.data <- true // signal for writer to start polling the buffer
 }
 
 func (r *replica) writer() {

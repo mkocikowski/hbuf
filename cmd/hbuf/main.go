@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime"
 	"time"
 
 	"github.com/mkocikowski/hbuf/cmd/hbuf/consume"
@@ -31,7 +32,7 @@ for dev convenience, to run a "real" server see the "node" command.`
 
 func main() {
 
-	log.Printf("version: %s build: %s %s", Version, BuildHash, BuildDate)
+	log.Printf("version: %s build: %s %s %s", Version, BuildHash, BuildDate, runtime.Version())
 
 	if len(os.Args) == 1 {
 		node.Run()
