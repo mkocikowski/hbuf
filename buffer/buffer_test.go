@@ -38,7 +38,7 @@ func TestBuffer(t *testing.T) {
 		t.Errorf("expected error, didn't get it")
 	}
 
-	m := message.New("text/plain", []byte("foo"))
+	m := &message.Message{Type: "text/plain", Body: []byte("foo")}
 	if err := b.Write(m); err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestBuffer(t *testing.T) {
 	if x.ID != 0 {
 		t.Fatalf("expected message id==0, got: %v", x.ID)
 	}
-	m = message.New("text/plain", []byte("monkey"))
+	m = &message.Message{Type: "text/plain", Body: []byte("monkey")}
 	if err := b.Write(m); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -112,12 +112,12 @@ func TestRotateSegments(t *testing.T) {
 	b.BufferMaxSegments = 2
 
 	for i := 0; i < 5; i++ {
-		m := message.New("text/plain", []byte(fmt.Sprintf("foo-%d", i)))
+		m := &message.Message{Type: "text/plain", Body: []byte(fmt.Sprintf("foo-%d", i))}
 		err = b.Write(m)
 	}
 	_, err = b.Read(0)
 	if err != segment.ErrorOutOfBounds {
-		t.Fatalf("not the error i expected")
+		t.Fatalf("not the error i expected: %v", err)
 	}
 	m, err := b.Read(4)
 	if err != nil {
@@ -188,7 +188,7 @@ func BenchmarkConsume(b *testing.B) {
 	N := 10000
 	for i := 0; i < N; i++ {
 		body := bytes.Repeat([]byte("x"), rand.Intn(1<<10))
-		m := message.New("text/plain", body)
+		m := &message.Message{Type: "text/plain", Body: body}
 		if err := buffer.Write(m); err != nil {
 			log.Println(err)
 		}

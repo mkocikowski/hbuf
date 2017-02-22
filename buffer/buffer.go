@@ -1,3 +1,5 @@
+// Buffer is a sequence of messages.
+// Buffer persists messages into one or more consecutive segments. Buffer manages atomic writes, and concurrent reads by consumers. Within a buffer, message IDs are monotonic, even though due to segment rotation / truncating, older messages may be lost. Buffer translates between the monotonic message IDs and the segment offsets (each segment's offsets start at 0).
 package buffer
 
 import (
@@ -47,6 +49,10 @@ func DefaultConfig() *Config {
 	}
 }
 
+var (
+	ErrorBufferClosed = fmt.Errorf("buffer closed")
+)
+
 type Buffer struct {
 	*Config
 	ID         string `json:"id"`
@@ -55,6 +61,7 @@ type Buffer struct {
 	Controller string `json:"-"`
 	Path       string `json:"dir"`
 	Len        int    `json:"len"`
+	sha        []byte
 	running    bool
 	replicas   map[string]*replica
 	consumers  map[string]*Consumer
@@ -68,7 +75,6 @@ func (b *Buffer) Init() error {
 		b.Config = DefaultConfig()
 	}
 	b.lock = new(sync.Mutex)
-	// TODO: is this needed?
 	if err := os.MkdirAll(b.Path, 0755); err != nil {
 		return fmt.Errorf("error creating buffer dir: %v", err)
 	}
@@ -96,19 +102,25 @@ func (b *Buffer) openSegments() error {
 		}
 		segments = append(segments, f.Name())
 	}
+	if len(segments) == 0 {
+		return nil
+	}
 	sort.Strings(segments)
 	for _, f := range segments {
-		s := &segment.Segment{Path: filepath.Join(b.Path, f)}
-		err := s.Open()
+		p := filepath.Join(b.Path, f)
+		s, err := segment.Open(p)
 		if err != nil {
-			return fmt.Errorf("error opening segment %q: %v", s.Path, err)
+			return fmt.Errorf("error opening segment %q: %v", p, err)
 		}
 		b.segments = append(b.segments, s)
-		//b.Len += s.Count
-		b.Len = s.First + s.Len()
 	}
-	// TODO: close all but the last segment for writing?
-	// TODO: trip segments?
+	s := b.segments[len(b.segments)-1]
+	b.Len = s.First + s.Len()
+	m, err := s.Last()
+	if err != nil {
+		return fmt.Errorf("error getting last message from last segment: %v", err)
+	}
+	b.sha = m.Sha
 	return nil
 }
 
@@ -250,9 +262,7 @@ func (b *Buffer) addSegment() error {
 	if len(b.segments) > 0 {
 		b.segments[len(b.segments)-1].Close()
 	}
-	f := filepath.Join(b.Path, fmt.Sprintf("segment_%08x", b.Len))
-	s := &segment.Segment{Path: f, First: b.Len}
-	err := s.Open()
+	s, err := segment.New(b.Path, b.Len)
 	if err != nil {
 		return fmt.Errorf("error creating segment: %v", err)
 	}
@@ -268,13 +278,10 @@ func (b *Buffer) getSegment() (*segment.Segment, error) {
 		}
 	}
 	s := b.segments[len(b.segments)-1]
-	if s.Len() >= b.SegmentMaxMessages {
-		if err := b.addSegment(); err != nil {
-			return nil, err
-		}
-		s = b.segments[len(b.segments)-1]
-	}
-	if s.SizeB() >= b.SegmentMaxBytes {
+	switch {
+	case s.Len() >= b.SegmentMaxMessages:
+		fallthrough
+	case s.SizeB() >= b.SegmentMaxBytes:
 		if err := b.addSegment(); err != nil {
 			return nil, err
 		}
@@ -295,10 +302,13 @@ func (b *Buffer) write(m *message.Message) error {
 	if err != nil {
 		return err
 	}
+	m.ID = b.Len
+	m.Sum(b.sha)
 	if err := s.Write(m); err != nil {
 		return err
 	}
 	b.Len += 1
+	b.sha = m.Sha
 	// this signals to replicas that there is data to be syncd
 	for _, r := range b.replicas {
 		select {
@@ -308,21 +318,6 @@ func (b *Buffer) write(m *message.Message) error {
 	}
 	return nil
 }
-
-//func (b *Buffer) writer() {
-//	log.Printf("started writer for buffer %q", b.ID)
-//	for m := range b.data {
-//		err := b.write(m)
-//		if err != nil {
-//			log.Println(err)
-//			m.Error <- err
-//		}
-//		close(m.Error)
-//	}
-//	for _, r := range b.replicas {
-//		r.Stop()
-//	}
-//}
 
 func (b *Buffer) Write(m *message.Message) error {
 	b.lock.Lock()
@@ -341,6 +336,10 @@ func (b *Buffer) read(id int) (*message.Message, error) {
 	if len(b.segments) == 0 {
 		return nil, segment.ErrorOutOfBounds
 	}
+	if b.segments[0].First > id {
+		// likely the segment containing the message has been trimmed
+		return nil, segment.ErrorOutOfBounds
+	}
 	var i int
 	for j, s := range b.segments {
 		// TODO: what if the segment containing the message has been deleted?
@@ -349,8 +348,9 @@ func (b *Buffer) read(id int) (*message.Message, error) {
 		}
 		i = j
 	}
-	// can return segment.ErrorOutOfBounds
-	return b.segments[i].Read(id)
+	s := b.segments[i]
+	n := id - s.First
+	return s.Read(n)
 }
 
 func (b *Buffer) Read(id int) (*message.Message, error) {
@@ -373,6 +373,9 @@ func (b *Buffer) Consume(id string) (*message.Message, error) {
 		c = &Consumer{ID: id}
 		b.consumers[id] = c
 	}
+	// TODO: handle situation where the segment has been trimmed, and so
+	// reading the next message fails; the consumer should transparently move
+	// to the next segment, skipping messages transparently?
 	m, err := b.read(c.N)
 	if err == nil {
 		c.N += 1

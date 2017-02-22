@@ -25,7 +25,7 @@ func TestReplica(t *testing.T) {
 	if err := b.Init(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	m := message.New("text/plain", []byte("foo"))
+	m := &message.Message{Type: "text/plain", Body: []byte("foo")}
 	if err := b.Write(m); err != nil {
 		t.Fatal(err)
 	}

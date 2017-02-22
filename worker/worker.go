@@ -251,19 +251,24 @@ func (w *Worker) handleWriteToBuffer(req *http.Request) *router.Response {
 	if !ok {
 		return &router.Response{StatusCode: http.StatusNotFound}
 	}
-	//dump, _ := httputil.DumpRequest(req, true)
-	//log.Println(string(dump))
 	body, err := ioutil.ReadAll(req.Body)
 	if err != nil {
 		return &router.Response{Error: fmt.Errorf("error reading message body: %v", err)}
 	}
-	m := message.New(req.Header.Get("Content-Type"), body)
-	if ts := req.Header.Get("Hbuf-Ts"); ts != "" {
-		t, err := time.Parse(time.RFC3339Nano, ts)
-		if err == nil {
-			m.TS = t
-			//log.Println("setting TS:", ts)
+	t := time.Now().UTC()
+	if h := req.Header.Get("Hbuf-Ts"); h != "" {
+		t, err = time.Parse(time.RFC3339Nano, h)
+		if err != nil {
+			return &router.Response{
+				Error:      fmt.Errorf("error parsing Hbuf-Ts header: %v", err),
+				StatusCode: http.StatusBadRequest,
+			}
 		}
+	}
+	m := &message.Message{
+		Type: req.Header.Get("Content-Type"),
+		Body: body,
+		TS:   t,
 	}
 	if err := b.Write(m); err != nil {
 		// theoretically the buffer may have been destroyed in the mean time
@@ -277,7 +282,10 @@ func (w *Worker) handleReadFromBuffer(req *http.Request) *router.Response {
 	offset := req.URL.Query().Get("offset")
 	i, err := strconv.Atoi(offset)
 	if err != nil {
-		return &router.Response{Error: fmt.Errorf("bad offset %q (expected aw integer): %v", offset, err), StatusCode: http.StatusBadRequest}
+		return &router.Response{
+			Error:      fmt.Errorf("bad offset %q (expected aw integer): %v", offset, err),
+			StatusCode: http.StatusBadRequest,
+		}
 	}
 	buffer := mux.Vars(req)["buffer"]
 	w.lock.Lock()

@@ -7,7 +7,6 @@ import (
 	"log"
 	"math/rand"
 	"os"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -16,11 +15,14 @@ import (
 )
 
 func TestMarshalUnmarshal(t *testing.T) {
-	//m := &message.Message{ID: 1, TS: time.Now().UTC(), Type: "text/plain", Body: []byte("foo")}
-	m := message.New("text/plain", []byte("foo"))
-	b := marshal(m)
+	m := &message.Message{ID: 1, TS: time.Now().UTC(), Type: "text/plain", Body: []byte("foo")}
+	b, err := marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
 	log.Println(string(b))
-	n, err := unmarshal(b)
+	n := new(message.Message)
+	err = unmarshal(b, n)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,12 +43,13 @@ func TestReadWrite(t *testing.T) {
 	log.Println(dir)
 	//defer os.RemoveAll(dir)
 
-	s := &Segment{Path: filepath.Join(dir, "segment_0"), First: 5}
-	s.Open()
+	s, err := New(dir, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := s.Path
 
-	var m *message.Message
 	ts := time.Now().UTC()
-
 	tests := []struct {
 		n int
 		s string
@@ -56,18 +59,13 @@ func TestReadWrite(t *testing.T) {
 		{7, "baz"},
 	}
 	for _, test := range tests {
-		//m := &message.Message{TS: ts, Type: "text/plain", Body: []byte(test.s)}
-		m := message.New("text/plain", []byte(test.s))
-		m.TS = ts
+		m := &message.Message{ID: test.n, TS: ts, Type: "text/plain", Body: []byte(test.s)}
 		if err := s.Write(m); err != nil {
 			t.Fatal(err)
 		}
-		if m.ID != test.n {
-			t.Fatalf("unexpected sequence number: %v", m.ID)
-		}
 	}
 	for i, test := range tests {
-		m, err := s.Read(test.n)
+		m, err := s.Read(i)
 		if err != nil {
 			t.Fatalf("test %d: %v", i, err)
 		}
@@ -77,67 +75,67 @@ func TestReadWrite(t *testing.T) {
 	}
 	s.Close()
 
-	s = &Segment{Path: filepath.Join(dir, "segment_0")}
-	s.Open()
-	s.Close() // closing for writes
+	var m *message.Message
+
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if s.First != 5 {
 		t.Fatalf("expected 5, got %d", s.First)
 	}
-	m, err = s.Read(6)
+	m, err = s.Read(1)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if string(m.Body) != "bar" {
 		t.Errorf("barf")
 	}
 	if m.TS != ts {
 		t.Errorf("timestamps don't match: %v %v", ts, m.TS)
 	}
-	//m = &message.Message{Type: "text/plain", Body: []byte("baz")}
-	m = message.New("text/plain", []byte("baz"))
+	s.Close()
+	m = &message.Message{Type: "text/plain", Body: []byte("baz")}
 	err = s.Write(m)
 	if err != ErrorSegmentClosed {
 		t.Fatal("expected error")
 	}
-	s.Close()
 
-	s = &Segment{Path: filepath.Join(dir, "segment_0")}
-	s.Open()
-	m = message.New("text/plain", []byte("monkey"))
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m = &message.Message{ID: 99, Type: "text/plain", Body: []byte("monkey")}
 	err = s.Write(m)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.ID != 8 {
-		t.Fatalf("unexpected sequence number: %v", m.ID)
-	}
 	if s.Len() != 4 {
 		t.Fatalf("expected length 4, got: %d", s.Len())
 	}
-
 	m, err = s.Last()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if m.ID != 8 {
+	// segment does no enforcement of message IDs
+	if m.ID != 99 {
 		t.Fatalf("unexpected sequence number: %v", m.ID)
 	}
-
-	m, err = s.Read(8)
+	m, err = s.Read(3)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if m.ID != 8 {
+	if m.ID != 99 {
 		t.Fatalf("unexpected sequence number: %v", m.ID)
 	}
-
-	m, err = s.Read(9)
+	m, err = s.Read(4)
 	if err != ErrorOutOfBounds {
 		t.Fatalf("unexpected error: %v", err)
 	}
-
-	err = s.verify()
-	if err != nil {
-		t.Fatal(err)
+	m, err = s.Read(-1)
+	if err != ErrorOutOfBounds {
+		t.Fatalf("unexpected error: %v", err)
 	}
-
 	s.Close()
 }
 
@@ -154,14 +152,16 @@ func TestRWParallel(t *testing.T) {
 	log.Println(dir)
 	//defer os.RemoveAll(dir)
 
-	s := &Segment{Path: filepath.Join(dir, "segment_0")}
-	s.Open()
+	s, err := New(dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	N := 1 << 10
 
+	// first, write N messages so that consumers below don't throw errors
 	for i := 0; i < N; i++ {
-		//m := &message.Message{Type: "text/plain", Body: []byte(fmt.Sprintf("%d", i))}
-		m := message.New("text/plain", []byte(fmt.Sprintf("%d", i)))
+		m := &message.Message{Type: "text/plain", Body: []byte(fmt.Sprintf("%d", i))}
 		if err := s.Write(m); err != nil {
 			t.Fatal(err)
 		}
@@ -180,8 +180,7 @@ func TestRWParallel(t *testing.T) {
 					return
 				default:
 				}
-				//m := &message.Message{Type: "text/plain", Body: []byte(fmt.Sprintf("%d", i))}
-				m := message.New("text/plain", []byte(fmt.Sprintf("%d", i)))
+				m := &message.Message{Type: "text/plain", Body: []byte(fmt.Sprintf("%d", i))}
 				if err := s.Write(m); err != nil {
 					t.Error(err)
 					return
@@ -226,14 +225,15 @@ func BenchmarkWrite(b *testing.B) {
 	log.Println(dir)
 	defer os.RemoveAll(dir)
 
-	s := &Segment{Path: filepath.Join(dir, "segment_0")}
-	s.Open()
+	s, err := New(dir, 0)
+	if err != nil {
+		b.Fatal(err)
+	}
 	defer s.Close()
 
 	for i := 0; i < b.N; i++ {
 		body := bytes.Repeat([]byte("x"), rand.Intn(1<<10))
-		//m := &message.Message{TS: time.Now(), Type: "text/plain", Body: body}
-		m := message.New("text/plain", body)
+		m := &message.Message{TS: time.Now(), Type: "text/plain", Body: body}
 		err := s.Write(m)
 		if err != nil {
 			b.Fatal(err)
@@ -250,15 +250,16 @@ func BenchmarkRandomRead(b *testing.B) {
 	log.Println(dir)
 	defer os.RemoveAll(dir)
 
-	s := &Segment{Path: filepath.Join(dir, "segment_0")}
-	s.Open()
+	s, err := New(dir, 0)
+	if err != nil {
+		b.Fatal(err)
+	}
 	defer s.Close()
 
 	N := 10000
 	for i := 0; i < N; i++ {
 		body := bytes.Repeat([]byte("x"), rand.Intn(1<<10))
-		//m := &message.Message{Type: "text/plain", Body: body}
-		m := message.New("text/plain", body)
+		m := &message.Message{Type: "text/plain", Body: body}
 		s.Write(m)
 	}
 
@@ -282,15 +283,16 @@ func BenchmarkSequentialRead(b *testing.B) {
 	log.Println(dir)
 	defer os.RemoveAll(dir)
 
-	s := &Segment{Path: filepath.Join(dir, "segment_0")}
-	s.Open()
+	s, err := New(dir, 0)
+	if err != nil {
+		b.Fatal(err)
+	}
 	defer s.Close()
 
 	N := 10000
 	for i := 0; i < N; i++ {
 		body := bytes.Repeat([]byte("x"), rand.Intn(1<<10))
-		//m := &message.Message{Type: "text/plain", Body: body}
-		m := message.New("text/plain", body)
+		m := &message.Message{Type: "text/plain", Body: body}
 		s.Write(m)
 	}
 
