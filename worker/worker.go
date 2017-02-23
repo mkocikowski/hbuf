@@ -16,7 +16,6 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/mkocikowski/hbuf/buffer"
-	"github.com/mkocikowski/hbuf/controller"
 	"github.com/mkocikowski/hbuf/message"
 	"github.com/mkocikowski/hbuf/router"
 	"github.com/mkocikowski/hbuf/segment"
@@ -44,31 +43,33 @@ type Worker struct {
 	lock       *sync.Mutex
 }
 
-func (w *Worker) Init() (*Worker, error) {
+func (w *Worker) Init() error {
 	//
 	w.buffers = make(map[string]*buffer.Buffer)
 	w.lock = new(sync.Mutex)
 	w.lock.Lock()
 	defer w.lock.Unlock()
 	w.routes = []*router.Route{
-		{"", []string{"GET"}, w.handleGetInfo, "show information about the node"},
-		{"/buffers", []string{"POST"}, w.handleCreateBuffer, "create a buffer; send empty body; returns new buffer info"},
-		{"/buffers", []string{"GET"}, w.handleGetBuffers, "show available buffers"},
-		{"/buffers/{buffer:[a-f0-9]{16}}", []string{"GET"}, w.handleGetBuffer, "show buffer info"},
-		{"/buffers/{buffer:[a-f0-9]{16}}", []string{"POST"}, w.handleWriteToBuffer, "write message to buffer"},
-		{"/buffers/{buffer:[a-f0-9]{16}}", []string{"DELETE"}, w.handleDeleteBuffer, "delete buffer and all its data"},
-		{"/buffers/{buffer:[a-f0-9]{16}}/replicas", []string{"POST"}, w.handleSetReplicas, "set buffer's replicas"},
-		{"/buffers/{buffer:[a-f0-9]{16}}/consumers", []string{"GET"}, w.handleGetOffsets, "get consumers and their offsets"},
-		{`/buffers/{buffer:[a-f0-9]{16}}/consumers/{consumer:[a-zA-Z0-9_\-]{1,256}}/_next`, []string{"POST"}, w.handleConsumeFromBuffer, "consume message from buffer"},
+		{"", []string{"GET"}, w.handleGetInfo, ""},
+		{"/buffers", []string{"POST"}, w.handleCreateBuffer, ""},
+		{"/buffers", []string{"GET"}, w.handleGetBuffers, ""},
+		{"/buffers/{buffer:[a-f0-9]{16}}", []string{"GET"}, w.handleGetBuffer, ""},
+		{"/buffers/{buffer:[a-f0-9]{16}}", []string{"POST"}, w.handleWriteToBuffer, ""},
+		{"/buffers/{buffer:[a-f0-9]{16}}", []string{"DELETE"}, w.handleDeleteBuffer, ""},
+		{"/buffers/{buffer:[a-f0-9]{16}}/replicas", []string{"POST"}, w.handleSetReplicas, ""},
+		{"/buffers/{buffer:[a-f0-9]{16}}/consumers", []string{"GET"}, w.handleGetOffsets, ""},
+		{
+			`/buffers/{buffer:[a-f0-9]{16}}/consumers/{consumer:[a-zA-Z0-9_\-]{1,256}}/_next`,
+			[]string{"POST"}, w.handleConsumeFromBuffer, "",
+		},
 	}
-	//
 	if err := w.loadBuffers(); err != nil {
-		return nil, fmt.Errorf("error loading buffers: %v", err)
+		return fmt.Errorf("error loading buffers: %v", err)
 	}
 	if err := w.registerWithController(); err != nil {
-		return nil, fmt.Errorf("error registering worker with controller: %v", err)
+		return fmt.Errorf("error registering worker with controller: %v", err)
 	}
-	return w, nil
+	return nil
 }
 
 func (w *Worker) Routes() []*router.Route {
@@ -119,11 +120,7 @@ func (w *Worker) registerWithController() error {
 	}
 	//
 	for _, b := range w.buffers {
-		c := controller.Buffer{
-			ID:       b.ID,
-			URL:      b.URL,
-			Replicas: b.Replicas(),
-		}
+		c := map[string]string{"id": b.ID, "url": b.URL}
 		j, _ := json.Marshal(c)
 		resp, err := client.Post(w.Controller+"/buffers", "application/json", bytes.NewBuffer(j))
 		if err != nil {
@@ -137,6 +134,7 @@ func (w *Worker) registerWithController() error {
 		if resp.StatusCode != http.StatusNoContent {
 			return fmt.Errorf("error registering buffer: (%d) %v", resp.StatusCode, string(body))
 		}
+		log.Printf("registered buffer %q with controller", b.ID)
 	}
 	return nil
 }

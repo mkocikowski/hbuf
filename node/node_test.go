@@ -18,8 +18,8 @@ func TestNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	//log.Println(dir)
-	defer os.RemoveAll(dir)
+	log.Println(dir)
+	//defer os.RemoveAll(dir)
 	node := &Node{Path: dir}
 	server := httptest.NewServer(node)
 	defer server.Close()
@@ -69,6 +69,7 @@ func TestNode(t *testing.T) {
 		log.Printf("%#v", node.tenants)
 		t.Fatalf("tenant is unexpectedly nil")
 	}
+	//time.Sleep(3 * time.Second)
 	resp, err = http.Get(tenant.Client.URL + "/topics/foo/next")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -129,7 +130,7 @@ func TestParallel(t *testing.T) {
 	writerDone := make(chan bool)
 	data := make(chan string)
 
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 100; i++ {
 		writerWG.Add(1)
 		time.Sleep(1 * time.Millisecond)
 		go func() {
@@ -161,7 +162,7 @@ func TestParallel(t *testing.T) {
 	}
 	log.Println("started all the writers")
 
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 100; i++ {
 		readerWG.Add(1)
 		time.Sleep(1 * time.Millisecond)
 		go func() {

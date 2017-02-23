@@ -84,9 +84,6 @@ func (b *Buffer) Init() error {
 	if err := b.loadConsumers(); err != nil {
 		return fmt.Errorf("error loading consumers: %v", err)
 	}
-	if err := b.loadReplicas(); err != nil {
-		return fmt.Errorf("error loading replicas: %v", err)
-	}
 	b.running = true
 	return nil
 }
@@ -158,17 +155,6 @@ func (b *Buffer) Consumers() []byte {
 	return j
 }
 
-func (b *Buffer) Replicas() []string {
-	//
-	b.lock.Lock()
-	defer b.lock.Unlock()
-	replicas := make([]string, 0, len(b.replicas))
-	for r, _ := range b.replicas {
-		replicas = append(replicas, r)
-	}
-	return replicas
-}
-
 func (b *Buffer) SetReplicas(replicas []string) {
 	//
 	if b.replicas == nil {
@@ -187,36 +173,6 @@ func (b *Buffer) SetReplicas(replicas []string) {
 	}
 }
 
-func (b *Buffer) loadReplicas() error {
-	//
-	f := filepath.Join(b.Path, "replicas")
-	d, err := ioutil.ReadFile(f)
-	switch {
-	case os.IsNotExist(err):
-		log.Printf("no replicas on disk for buffer %q", b.ID)
-		return nil
-	case err != nil:
-		return fmt.Errorf("error reading buffer replicas: %v", err)
-	}
-	replicas := make([]string, 0)
-	if err := json.Unmarshal(d, &replicas); err != nil {
-		return fmt.Errorf("error parsing buffer replicas: %v", err)
-	}
-	b.SetReplicas(replicas)
-	return nil
-}
-
-func (b *Buffer) saveReplicas() error {
-	//
-	replicas := b.Replicas()
-	j, _ := json.Marshal(replicas)
-	f := filepath.Join(b.Path, "replicas")
-	if err := ioutil.WriteFile(f, j, 0644); err != nil {
-		return fmt.Errorf("error saving buffer replicas: %v", err)
-	}
-	return nil
-}
-
 func (b *Buffer) Stop() {
 	//
 	b.lock.Lock()
@@ -228,13 +184,10 @@ func (b *Buffer) Stop() {
 		s.Close()
 	}
 	b.lock.Unlock()
-	if err := b.saveReplicas(); err != nil {
-		log.Println(err)
-	}
 	if err := b.saveConsumers(); err != nil {
 		log.Println(err)
 	}
-	log.Printf("buffer %q stopped; replicas: %v", b.ID, b.Replicas())
+	log.Printf("buffer %q stopped", b.ID)
 }
 
 func (b *Buffer) Delete() error {

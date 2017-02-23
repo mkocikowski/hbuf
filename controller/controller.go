@@ -26,9 +26,8 @@ var (
 )
 
 type Buffer struct {
-	ID       string   `json:"id"`
-	URL      string   `json:"url"`
-	Replicas []string `json:"replicas"`
+	ID  string `json:"id"`
+	URL string `json:"url"`
 }
 
 type Topic struct {
@@ -48,17 +47,18 @@ type State struct {
 }
 
 type Controller struct {
-	ID      string `json:"id"`
-	URL     string `json:"url"`
-	Tenant  string `json:"-"`
-	Path    string `json:"-"`
-	routes  []*router.Route
-	workers map[string]*Worker
-	topics  map[string]*Topic
-	buffers map[string]*Buffer
-	running bool
-	n       int
-	lock    *sync.Mutex
+	ID       string `json:"id"`
+	URL      string `json:"url"`
+	Tenant   string `json:"-"`
+	Path     string `json:"-"`
+	routes   []*router.Route
+	workers  map[string]*Worker
+	topics   map[string]*Topic
+	buffers  map[string]*Buffer
+	replicas map[string][]string
+	running  bool
+	n        int
+	lock     *sync.Mutex
 }
 
 func (c *Controller) Init() (*Controller, error) {
@@ -66,6 +66,7 @@ func (c *Controller) Init() (*Controller, error) {
 	c.workers = make(map[string]*Worker)
 	c.topics = make(map[string]*Topic)
 	c.buffers = make(map[string]*Buffer)
+	c.replicas = make(map[string][]string)
 	c.lock = new(sync.Mutex)
 	c.lock.Lock()
 	defer c.lock.Unlock()
@@ -87,16 +88,26 @@ func (c *Controller) Init() (*Controller, error) {
 		// directory doesn't exist, assume "fresh" node
 		return c, nil
 	}
-	b, err := ioutil.ReadFile(filepath.Join(c.Path, "topics"))
+	t, err := ioutil.ReadFile(filepath.Join(c.Path, "topics"))
 	if err != nil {
 		log.Printf("error reading topics data: %v", err)
 		return c, nil
 	}
-	t := make(map[string]*Topic)
-	if err := json.Unmarshal(b, &t); err != nil {
+	if err := json.Unmarshal(t, &c.topics); err != nil {
 		return nil, fmt.Errorf("error parsing topics data: %v", err)
 	}
-	c.topics = t
+	//
+	r, err := ioutil.ReadFile(filepath.Join(c.Path, "replicas"))
+	if err != nil {
+		log.Printf("error reading replicas data: %v", err)
+		return c, nil
+	}
+	if err := json.Unmarshal(r, &c.replicas); err != nil {
+		return nil, fmt.Errorf("error parsing replicas data: %v", err)
+	}
+	for p, r := range c.replicas {
+		go c.setReplicas(p, r)
+	}
 	//
 	return c, nil
 }
@@ -111,28 +122,12 @@ func (c *Controller) Stop() {
 	defer c.lock.Unlock()
 	c.running = false
 	os.MkdirAll(c.Path, 0755)
-	j, _ := json.Marshal(c.topics)
-	ioutil.WriteFile(filepath.Join(c.Path, "topics"), j, 0644)
+	t, _ := json.Marshal(c.topics)
+	ioutil.WriteFile(filepath.Join(c.Path, "topics"), t, 0644)
+	r, _ := json.Marshal(c.replicas)
+	ioutil.WriteFile(filepath.Join(c.Path, "replicas"), r, 0644)
 	log.Printf("controller %q stopped", c.ID)
 }
-
-//type State struct {
-//	Topics map[string][]*Buffer `json:"topics"`
-//}
-//func (c *Controller) handleGetInfo(req *http.Request) *router.Response {
-//	//
-//	c.lock.Lock()
-//	state := State{Topics: make(map[string][]*Buffer)}
-//	for id, topic := range c.topics {
-//		state.Topics[id] = make([]*Buffer, 0)
-//		for _, b := range topic.Buffers {
-//			state.Topics[id] = append(state.Topics[id], c.buffers[b])
-//		}
-//	}
-//	c.lock.Unlock()
-//	j, _ := json.Marshal(state)
-//	return &router.Response{Body: j}
-//}
 
 func (c *Controller) handleGetInfo(req *http.Request) *router.Response {
 	//
@@ -181,17 +176,16 @@ func (c *Controller) handleRegisterBuffer(req *http.Request) *router.Response {
 	if err != nil {
 		return &router.Response{Error: fmt.Errorf("error reading register buffer request body: %v", err)}
 	}
-	buff := &Buffer{}
-	if err := json.Unmarshal(body, buff); err != nil {
+	remote := &Buffer{}
+	if err := json.Unmarshal(body, remote); err != nil {
 		return &router.Response{
 			Error:      fmt.Errorf("error parsing register buffer request body: %v", err),
 			StatusCode: http.StatusBadRequest,
 		}
 	}
 	c.lock.Lock()
-	c.buffers[buff.ID] = buff
-	c.lock.Unlock()
-	log.Printf("registered buffer: %v", buff.URL)
+	defer c.lock.Unlock()
+	c.buffers[remote.ID] = remote
 	return &router.Response{StatusCode: http.StatusNoContent}
 }
 
@@ -257,23 +251,38 @@ func (c *Controller) createBuffer() (*Buffer, error) {
 	return b, nil
 }
 
-func (c *Controller) setReplicas(b *Buffer, replicas []string) error {
+func (c *Controller) setReplicas(primary string, replicas []string) {
 	//
-	j, _ := json.Marshal(replicas)
-	resp, err := client.Post(b.URL+"/replicas", "application/json", bytes.NewBuffer(j))
-	if err != nil {
-		return fmt.Errorf("error making set replicas request: %v", err)
+	for {
+		c.lock.Lock()
+		b, ok := c.buffers[primary]
+		c.lock.Unlock()
+		if !ok {
+			log.Printf("buffer %q not registered with controller, can't set replicas", primary)
+			time.Sleep(1 * time.Second)
+			continue
+		}
+		j, _ := json.Marshal(replicas)
+		resp, err := client.Post(b.URL+"/replicas", "application/json", bytes.NewBuffer(j))
+		if err != nil {
+			log.Printf("error making set replicas request: %v", err)
+			time.Sleep(1 * time.Second)
+			continue
+		}
+		body, err := ioutil.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			log.Printf("error reading response body for set replicas request: %v", string(body))
+			time.Sleep(1 * time.Second)
+			continue
+		}
+		if resp.StatusCode == http.StatusOK {
+			log.Printf("replicas %q for buffer %q set successfuly", replicas, b.ID)
+			return
+		}
+		fmt.Printf("error making set replicas request: (%d) %v", resp.StatusCode, string(body))
+		time.Sleep(1 * time.Second)
 	}
-	body, err := ioutil.ReadAll(resp.Body)
-	resp.Body.Close()
-	if err != nil {
-		return fmt.Errorf("error reading response body for set replicas request: %v", string(body))
-	}
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("error making set replicas request: (%d) %v", resp.StatusCode, string(body))
-	}
-	b.Replicas = replicas
-	return nil
 }
 
 func (c *Controller) createTopic(id string) (*Topic, error) {
@@ -286,7 +295,7 @@ func (c *Controller) createTopic(id string) (*Topic, error) {
 		b, err := c.createBuffer()
 		if err != nil {
 			// TODO: cleanup buffers that have already been created?
-			return nil, fmt.Errorf("error creating primary: %v", err)
+			return nil, fmt.Errorf("error creating primary buffer: %v", err)
 		}
 		c.buffers[b.ID] = b
 		t.Buffers = append(t.Buffers, b.ID)
@@ -295,14 +304,13 @@ func (c *Controller) createTopic(id string) (*Topic, error) {
 		for i := 0; i < 2; i++ {
 			r, err := c.createBuffer()
 			if err != nil {
-				return nil, fmt.Errorf("error creating replica: %v", err)
+				return nil, fmt.Errorf("error creating replica buffer: %v", err)
 			}
 			c.buffers[r.ID] = r
 			replicas = append(replicas, r.ID)
 		}
-		if err := c.setReplicas(b, replicas); err != nil {
-			return nil, fmt.Errorf("error setting replicas for buffer %q: %v", b.ID, err)
-		}
+		c.replicas[b.ID] = replicas
+		go c.setReplicas(b.ID, replicas)
 	}
 	return t, nil
 }

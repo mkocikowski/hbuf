@@ -53,7 +53,7 @@ func (t *Tenant) Init(r *mux.Router, cURL string) error {
 		Controller: cURL,
 		Path:       filepath.Join(t.Path, "worker"),
 	}
-	if _, err := w.Init(); err != nil {
+	if err := w.Init(); err != nil {
 		return fmt.Errorf("error initializing worker for tenant %q: %v", t.ID, err)
 	}
 	u, _ = url.Parse(w.URL)
