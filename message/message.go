@@ -1,14 +1,15 @@
 package message
 
 import (
+	"bytes"
 	"crypto/sha256"
-	"encoding/json"
+	"fmt"
 	"time"
 )
 
 type Message struct {
 	ID   int       `json:"id"`
-	TS   time.Time `json:"ts"`
+	TS   time.Time `json:"ts`
 	Type string    `json:"type"`
 	Body []byte    `json:"-"`
 	Sha  []byte    `json:"sha"`
@@ -16,10 +17,9 @@ type Message struct {
 
 func (m *Message) Sum(previous []byte) []byte {
 	h := sha256.New()
-	m.Sha = nil
-	j, _ := json.Marshal(m)
-	h.Write(previous)
-	h.Write(j)
+	b := bytes.NewBuffer(previous)
+	fmt.Fprint(b, m.ID, m.TS, m.Type)
+	h.Write(b.Bytes())
 	h.Write(m.Body)
 	m.Sha = h.Sum(nil)
 	return m.Sha

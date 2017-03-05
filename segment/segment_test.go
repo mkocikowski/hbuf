@@ -26,11 +26,33 @@ func TestMarshalUnmarshal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if m.ID != n.ID {
+		t.Fatal("unserialized id doesn't match serialized")
+	}
+	if m.TS != n.TS {
+		t.Fatal("unserialized timestamp doesn't match serialized")
+	}
+	if m.Type != n.Type {
+		t.Fatal("unserialized type doesn't match serialized")
+	}
 	if !bytes.Equal(m.Body, n.Body) {
 		t.Fatal("unserialized message body doesn't match serialized")
 	}
-	if m.TS != n.TS {
-		t.Fatal("unserialized timestamp body doesn't match serialized")
+}
+
+func BenchmarkMarshal(b *testing.B) {
+	m := &message.Message{
+		ID:   1,
+		TS:   time.Now().UTC(),
+		Type: "text/plain",
+		Body: bytes.Repeat([]byte("x"), rand.Intn(1<<10)),
+	}
+	m.Sum(nil)
+	for i := 0; i < b.N; i++ {
+		_, err := marshal(m)
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 

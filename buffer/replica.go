@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -131,15 +132,30 @@ func (r *replica) writer() {
 				log.Println(err)
 				break
 			}
-			// TODO: read remote buffer length, compare to expected
 			req, _ := http.NewRequest("POST", u, bytes.NewBuffer(m.Body))
 			req.Header.Add("Content-Type", m.Type)
 			req.Header.Add("Hbuf-Ts", m.TS.Format(time.RFC3339Nano))
-			_, err = curl.Do(req)
+			req.Header.Add("Hbuf-Id", strconv.Itoa(m.ID))
+			b, err := curl.Do(req)
 			if err != nil {
 				log.Println(err)
 				break
 			}
+
+			// TODO: read remote buffer length, compare to expected
+			x := struct {
+				ID int `json:"id"`
+			}{}
+			if err = json.Unmarshal(b, &x); err != nil {
+				log.Printf("error parsing write response from remote: %v", err)
+				break
+			}
+			if x.ID != l {
+				log.Println("error replicating: remote message id doesn't match expected")
+				break
+			}
+			log.Printf("replicated: %v", string(b))
+
 			l += 1
 			r.lock.Lock()
 			r.length = l

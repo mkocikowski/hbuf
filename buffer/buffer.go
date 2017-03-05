@@ -251,11 +251,25 @@ func (b *Buffer) write(m *message.Message) error {
 	var err error
 	b.lock.Lock()
 	defer b.lock.Unlock()
+	// "normal" messages don't have their id set ahead of time; they get their
+	// id assigned based on the length of the buffer; however replica messages
+	// have their id set when sent from the origin, so that if a new replica
+	// buffer is being started not at 0 offset, the replica buffer knows what
+	// to set the first id to; also, so that it can verify correct ids are sent
+	if m.ID == 0 {
+		m.ID = b.Len
+	}
+	if m.ID != b.Len {
+		if b.Len != 0 {
+			return fmt.Errorf("message id doesn't match current buffer length")
+		}
+		// starting new buffer not at 0, likely for replication
+		b.Len = m.ID
+	}
 	s, err := b.getSegment()
 	if err != nil {
 		return err
 	}
-	m.ID = b.Len
 	m.Sum(b.sha)
 	if err := s.Write(m); err != nil {
 		return err
@@ -315,6 +329,28 @@ func (b *Buffer) Read(id int) (*message.Message, error) {
 	return b.read(id)
 }
 
+// get the message with specified id, on the next message with higher id (there
+// could be a gap say if segments have been trimmed)
+func (b *Buffer) next(id int) (*message.Message, error) {
+	if len(b.segments) == 0 {
+		return nil, segment.ErrorOutOfBounds
+	}
+	if b.segments[0].First > id {
+		// likely the segment containing the message has been trimmed
+		id = b.segments[0].First
+	}
+	var i int
+	for j, s := range b.segments {
+		if s.First > id {
+			break
+		}
+		i = j
+	}
+	s := b.segments[i]
+	n := id - s.First
+	return s.Read(n)
+}
+
 func (b *Buffer) Consume(id string) (*message.Message, error) {
 	if !b.running {
 		return nil, fmt.Errorf("buffer not running")
@@ -326,12 +362,9 @@ func (b *Buffer) Consume(id string) (*message.Message, error) {
 		c = &Consumer{ID: id}
 		b.consumers[id] = c
 	}
-	// TODO: handle situation where the segment has been trimmed, and so
-	// reading the next message fails; the consumer should transparently move
-	// to the next segment, skipping messages transparently?
-	m, err := b.read(c.N)
+	m, err := b.next(c.N)
 	if err == nil {
-		c.N += 1
+		c.N = m.ID + 1
 		// TODO: optimize this
 		// cutting this out improves performance 100x
 		b.saveConsumers()

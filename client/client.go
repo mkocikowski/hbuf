@@ -202,16 +202,19 @@ func (c *Client) handleWriteToTopic(req *http.Request) *router.Response {
 			continue
 		}
 		body, err := ioutil.ReadAll(resp.Body)
+		resp.Body.Close()
 		if err != nil {
 			log.Printf("couldn't read response from worker for buffer: %v", err)
 		}
-		resp.Body.Close()
 		if resp.StatusCode == http.StatusOK {
-			return &router.Response{StatusCode: http.StatusOK}
+			return &router.Response{Body: body, StatusCode: http.StatusOK}
 		}
 		log.Printf("error response when writing to buffer %q for topic %q: %v", b.ID, topic, string(body))
 	}
-	return &router.Response{Error: fmt.Errorf("error writing to topic: couldn't write to any buffer %v", buffers), StatusCode: http.StatusInternalServerError}
+	return &router.Response{
+		Error:      fmt.Errorf("error writing to topic: couldn't write to any buffer %v", buffers),
+		StatusCode: http.StatusInternalServerError,
+	}
 }
 
 func (c *Client) handleConsumeFromTopic(req *http.Request) *router.Response {

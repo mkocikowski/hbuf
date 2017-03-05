@@ -253,9 +253,19 @@ func (w *Worker) handleWriteToBuffer(req *http.Request) *router.Response {
 	if err != nil {
 		return &router.Response{Error: fmt.Errorf("error reading message body: %v", err)}
 	}
-	t := time.Now().UTC()
+	id := 0
+	if h := req.Header.Get("Hbuf-Id"); h != "" {
+		id, err = strconv.Atoi(h)
+		if err != nil {
+			return &router.Response{
+				Error:      fmt.Errorf("error parsing Hbuf-Id header: %v", err),
+				StatusCode: http.StatusBadRequest,
+			}
+		}
+	}
+	ts := time.Now().UTC()
 	if h := req.Header.Get("Hbuf-Ts"); h != "" {
-		t, err = time.Parse(time.RFC3339Nano, h)
+		ts, err = time.Parse(time.RFC3339Nano, h)
 		if err != nil {
 			return &router.Response{
 				Error:      fmt.Errorf("error parsing Hbuf-Ts header: %v", err),
@@ -264,16 +274,18 @@ func (w *Worker) handleWriteToBuffer(req *http.Request) *router.Response {
 		}
 	}
 	m := &message.Message{
+		ID:   id,
+		TS:   ts,
 		Type: req.Header.Get("Content-Type"),
 		Body: body,
-		TS:   t,
 	}
 	if err := b.Write(m); err != nil {
 		// theoretically the buffer may have been destroyed in the mean time
 		log.Printf("error writing message body to disk: %v", err)
 		return &router.Response{Error: fmt.Errorf("error writing message body: %v", err)}
 	}
-	return &router.Response{StatusCode: http.StatusOK}
+	j, _ := json.Marshal(m)
+	return &router.Response{Body: j}
 }
 
 func (w *Worker) handleReadFromBuffer(req *http.Request) *router.Response {

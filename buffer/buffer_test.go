@@ -13,7 +13,7 @@ import (
 	"github.com/mkocikowski/hbuf/util"
 )
 
-func TestBuffer(t *testing.T) {
+func TestBufferBasics(t *testing.T) {
 
 	dir, err := ioutil.TempDir("", "hbuf")
 	if err != nil {
@@ -91,6 +91,60 @@ func TestBuffer(t *testing.T) {
 		t.Fatalf("expected message id==1, got: %v", m.ID)
 	}
 
+}
+
+// test creating a buffer that doesn't start at 0 (say the early segments have
+// been trimmed, or maybe this is a replica which didn't start at 0
+func TestBufferOffset(t *testing.T) {
+
+	dir, err := ioutil.TempDir("", "hbuf")
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Println(dir)
+	//defer os.RemoveAll(dir)
+
+	uid := util.Uid()
+	b := &Buffer{ID: uid, Len: 10, Path: dir}
+	err = b.Init()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	m := &message.Message{Type: "text/plain", Body: []byte("foo")}
+	if err := b.Write(m); err != nil {
+		t.Fatal(err)
+	}
+	if m.ID != 10 {
+		t.Fatalf("expected id 10, got: %v", m.ID)
+	}
+	if b.Len != 11 {
+		t.Fatalf("expected buffer len 11, got: %v", b.Len)
+	}
+	x, err := b.Read(10)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(x.Body) != string(m.Body) {
+		t.Error("read message not same as written")
+	}
+	x, err = b.Consume("-")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(x.Body) != string(m.Body) {
+		t.Error("read message not same as written")
+	}
+	b.Stop()
+
+	b = &Buffer{ID: uid, Path: dir}
+	if err := b.Init(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if b.Len != 11 {
+		t.Fatalf("expected Len==1, got: %v", b.Len)
+	}
+	b.Stop()
 }
 
 func TestRotateSegments(t *testing.T) {
